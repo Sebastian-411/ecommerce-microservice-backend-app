@@ -271,7 +271,7 @@ pipeline {
                     sh '''
                         echo "Publicando artefactos localmente..."
                         mkdir -p artifacts
-                        find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -exec cp {} artifacts/ \;
+                        find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -exec cp {} artifacts/ \\;
                         ls -lh artifacts/
                     '''
                     archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: false
