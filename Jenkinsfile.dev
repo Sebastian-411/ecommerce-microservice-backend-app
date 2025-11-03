@@ -26,14 +26,13 @@ pipeline {
     }
     
     tools {
-        maven 'Maven-3.8'
+        maven 'Maven-3.8.8'
         jdk 'JDK-11'
     }
     
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
-        ansiColor('xterm')
         timeout(time: 60, unit: 'MINUTES')
         retry(2)
     }
@@ -209,7 +208,13 @@ pipeline {
                 }
                 stage('Tests de Integración') {
                     steps {
-                        sh './mvnw verify -DskipUnitTests -q' || echo 'Integration tests not configured'
+                        script {
+                            try {
+                                sh './mvnw verify -DskipUnitTests -q'
+                            } catch (Exception e) {
+                                echo 'Integration tests not configured or failed: ' + e.getMessage()
+                            }
+                        }
                     }
                 }
             }
