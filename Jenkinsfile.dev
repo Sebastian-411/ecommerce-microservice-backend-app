@@ -77,21 +77,9 @@ pipeline {
                     echo "=========================================="
                     
                     # Verificar que los artefactos principales fueron generados
-                    services=(
-                        "service-discovery"
-                        "cloud-config"
-                        "api-gateway"
-                        "proxy-client"
-                        "user-service"
-                        "product-service"
-                        "favourite-service"
-                        "order-service"
-                        "payment-service"
-                        "shipping-service"
-                    )
-                    
                     missing=0
-                    for service in "${services[@]}"; do
+                    
+                    for service in service-discovery cloud-config api-gateway proxy-client user-service product-service favourite-service order-service payment-service shipping-service; do
                         jar_file=$(find ${service}/target -name "${service}-v*.jar" -not -name "*-original.jar" 2>/dev/null | head -1)
                         if [ -f "$jar_file" ]; then
                             echo "${service}: $(basename $jar_file)"
