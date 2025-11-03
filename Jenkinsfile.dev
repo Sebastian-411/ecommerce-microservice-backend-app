@@ -1,29 +1,16 @@
 /*
  * Pipeline para construcción de microservicios en entorno DEV
- * Este pipeline se enfoca específicamente en el desarrollo y construcción de la aplicación
+ * Define los pipelines que permiten la construcción de la aplicación (dev environment)
  */
 
 pipeline {
     agent any
     
     environment {
-        // Configuración del entorno
         ENVIRONMENT = 'dev'
-        DOCKER_REGISTRY = 'selimhorri'
-        PROJECT_VERSION = '0.1.0'  // Versión del proyecto desde pom.xml
-        BUILD_VERSION = "${env.BUILD_NUMBER}"  // Versión del build de Jenkins
+        PROJECT_VERSION = '0.1.0'
         JAVA_VERSION = '11'
         MAVEN_OPTS = '-Xmx3072m -XX:MaxPermSize=512m'
-        
-        // Variables para construcción
-        SKIP_TESTS = 'false'
-        BUILD_CACHE = 'true'
-        
-        // Microservicios en orden de dependencia
-        INFRASTRUCTURE_SERVICES = 'service-discovery,cloud-config'
-        CORE_SERVICES = 'api-gateway,proxy-client'
-        BUSINESS_SERVICES = 'user-service,product-service,favourite-service,order-service,payment-service,shipping-service'
-        ALL_SERVICES = "${INFRASTRUCTURE_SERVICES},${CORE_SERVICES},${BUSINESS_SERVICES}"
     }
     
     tools {
@@ -34,262 +21,93 @@ pipeline {
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
-        timeout(time: 60, unit: 'MINUTES')
-        retry(2)
+        timeout(time: 30, unit: 'MINUTES')
     }
     
     stages {
-        stage('Preparación del Entorno') {
+        stage('Checkout') {
             steps {
+                checkout scm
                 script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD 2>/dev/null || echo "N/A"',
+                        returnStdout: true
+                    ).trim()
+                }
+            }
+        }
+        
+        stage('Build Application') {
+            steps {
+                sh '''
                     echo "=========================================="
                     echo "Pipeline de Construcción - DEV Environment"
                     echo "=========================================="
-                    echo "Versión del Build: ${PROJECT_VERSION}"
+                    echo "Versión del Build: 0.1.0"
                     echo "Branch: ${env.BRANCH_NAME}"
-                    echo "Commit: ${env.GIT_COMMIT}"
+                    echo "Commit: ${env.GIT_COMMIT_SHORT}"
+                    echo "=========================================="
+                    echo ""
+                    echo "Construyendo todos los microservicios..."
                     echo "=========================================="
                     
-                    // Verificar herramientas necesarias
-                    sh '''
-                        echo "Verificando herramientas..."
-                        java -version
-                        mvn -version
-                        docker --version
-                        kubectl version --client
-                    '''
-                }
-            }
-        }
-        
-        stage('Checkout') {
-            steps {
-                script {
-                    // Intentar checkout si hay SCM configurado
-                    try {
-                        checkout scm
-                        env.GIT_COMMIT_SHORT = sh(
-                            script: 'git rev-parse --short HEAD 2>/dev/null || echo "N/A"',
-                            returnStdout: true
-                        ).trim()
-                        env.GIT_BRANCH = env.BRANCH_NAME ?: 'local'
-                    } catch (Exception e) {
-                        echo "⚠️  No hay SCM configurado, usando código local"
-                        echo "Si estás usando Pipeline Script Directo, esto es normal"
-                        env.GIT_COMMIT_SHORT = 'local'
-                        env.GIT_BRANCH = 'local'
-                    }
-                }
-            }
-        }
-        
-        stage('Validación de Código') {
-            parallel {
-                stage('Validar POM') {
-                    steps {
-                        sh './mvnw validate -q'
-                    }
-                }
-                stage('Verificar Dependencias') {
-                    steps {
-                        sh './mvnw dependency:analyze -q'
-                    }
-                }
-                stage('Verificar Sintaxis') {
-                    steps {
-                        sh './mvnw compiler:compile -q 2>&1 | head -100'
-                    }
-                }
-            }
-        }
-        
-        stage('Instalar Dependencias Compartidas') {
-            steps {
-                sh '''
-                    echo "Instalando módulos compartidos..."
-                    ./mvnw clean install -N -q
-                    ./mvnw install -pl service-discovery -am -DskipTests -q
-                    ./mvnw install -pl cloud-config -am -DskipTests -q
-                '''
-            }
-        }
-        
-        stage('Compilación de Infraestructura') {
-            parallel {
-                stage('Build Service Discovery') {
-                    steps {
-                        script {
-                            buildMicroservice('service-discovery', '8761')
-                        }
-                    }
-                }
-                stage('Build Cloud Config') {
-                    steps {
-                        script {
-                            buildMicroservice('cloud-config', '9296')
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Compilación de Servicios Core') {
-            parallel {
-                stage('Build API Gateway') {
-                    steps {
-                        script {
-                            buildMicroservice('api-gateway', '8080')
-                        }
-                    }
-                }
-                stage('Build Proxy Client') {
-                    steps {
-                        script {
-                            buildMicroservice('proxy-client', '8900')
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Compilación de Servicios de Negocio') {
-            parallel {
-                stage('Build User Service') {
-                    steps {
-                        script {
-                            buildMicroservice('user-service', '8700')
-                        }
-                    }
-                }
-                stage('Build Product Service') {
-                    steps {
-                        script {
-                            buildMicroservice('product-service', '8500')
-                        }
-                    }
-                }
-                stage('Build Favourite Service') {
-                    steps {
-                        script {
-                            buildMicroservice('favourite-service', '8800')
-                        }
-                    }
-                }
-                stage('Build Order Service') {
-                    steps {
-                        script {
-                            buildMicroservice('order-service', '8300')
-                        }
-                    }
-                }
-                stage('Build Payment Service') {
-                    steps {
-                        script {
-                            buildMicroservice('payment-service', '8400')
-                        }
-                    }
-                }
-                stage('Build Shipping Service') {
-                    steps {
-                        script {
-                            buildMicroservice('shipping-service', '8600')
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Ejecución de Tests') {
-            when {
-                expression { env.SKIP_TESTS == 'false' }
-            }
-            parallel {
-                stage('Tests Unitarios') {
-                    steps {
-                        sh './mvnw test -q'
-                    }
-                    post {
-                        always {
-                            junit '**/target/surefire-reports/TEST-*.xml'
-                            archiveArtifacts artifacts: '**/target/surefire-reports/**', allowEmptyArchive: true
-                        }
-                    }
-                }
-                stage('Tests de Integración') {
-                    steps {
-                        script {
-                            try {
-                                sh './mvnw verify -DskipUnitTests -q'
-                            } catch (Exception e) {
-                                echo 'Integration tests not configured or failed: ' + e.getMessage()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Construcción de Artefactos') {
-            steps {
-                sh '''
-                    echo "Empaquetando todos los microservicios..."
-                    ./mvnw package -DskipTests -q
+                    # Construir la aplicación completa
+                    ./mvnw clean package -DskipTests
                     
-                    echo "Verificando artefactos generados..."
-                    find . -name "*.jar" -type f | grep -v ".m2" | head -20
-                '''
-                archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: false
-            }
-        }
-        
-        stage('Construcción de Imágenes Docker') {
-            steps {
-                script {
-                    def services = [
-                        'service-discovery': '8761',
-                        'cloud-config': '9296',
-                        'api-gateway': '8080',
-                        'proxy-client': '8900',
-                        'user-service': '8700',
-                        'product-service': '8500',
-                        'favourite-service': '8800',
-                        'order-service': '8300',
-                        'payment-service': '8400',
-                        'shipping-service': '8600'
-                    ]
-                    
-                    services.each { service, port ->
-                        stage("Docker Build: ${service}") {
-                            buildDockerImage(service, port)
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Validación de Imágenes Docker') {
-            steps {
-                sh '''
-                    echo "Validando imágenes Docker construidas..."
-                    docker images | grep ecommerce-boot | head -15
                     echo ""
-                    echo "Verificando tamaño de imágenes..."
-                    docker images | grep ecommerce-boot | awk '{print $1 ":" $2 " - " $7}'
+                    echo "=========================================="
+                    echo "Verificando artefactos generados..."
+                    echo "=========================================="
+                    find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" | sort
+                    echo ""
+                    echo "Resumen de artefactos:"
+                    find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" -exec ls -lh {} \\;
                 '''
+                archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: false, excludes: '**/target/*-original.jar'
             }
         }
         
-        stage('Publicación Local de Artefactos') {
+        stage('Build Validation') {
             steps {
-                script {
-                    sh '''
-                        echo "Publicando artefactos localmente..."
-                        mkdir -p artifacts
-                        find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -exec cp {} artifacts/ \\;
-                        ls -lh artifacts/
-                    '''
-                    archiveArtifacts artifacts: 'artifacts/**', allowEmptyArchive: false
-                }
+                sh '''
+                    echo "=========================================="
+                    echo "Validando construcción..."
+                    echo "=========================================="
+                    
+                    # Verificar que los artefactos principales fueron generados
+                    services=(
+                        "service-discovery"
+                        "cloud-config"
+                        "api-gateway"
+                        "proxy-client"
+                        "user-service"
+                        "product-service"
+                        "favourite-service"
+                        "order-service"
+                        "payment-service"
+                        "shipping-service"
+                    )
+                    
+                    missing=0
+                    for service in "${services[@]}"; do
+                        jar_file=$(find ${service}/target -name "${service}-v*.jar" -not -name "*-original.jar" 2>/dev/null | head -1)
+                        if [ -f "$jar_file" ]; then
+                            echo "${service}: $(basename $jar_file)"
+                        else
+                            echo "${service}: JAR no encontrado"
+                            missing=$((missing + 1))
+                        fi
+                    done
+                    
+                    if [ $missing -gt 0 ]; then
+                        echo ""
+                        echo "Advertencia: $missing servicio(s) sin JAR generado"
+                        exit 1
+                    else
+                        echo ""
+                        echo "Todos los microservicios fueron construidos exitosamente"
+                    fi
+                '''
             }
         }
     }
@@ -298,112 +116,27 @@ pipeline {
         always {
             script {
                 echo "=========================================="
-                echo "Resumen del Build"
+                echo "Resumen del Build - DEV Environment"
                 echo "=========================================="
                 echo "Build Number: ${env.BUILD_NUMBER}"
                 echo "Estado: ${currentBuild.currentResult}"
-                echo "Duración: ${currentBuild.durationString}"
+                echo "Commit: ${env.GIT_COMMIT_SHORT}"
+                echo "Branch: ${env.BRANCH_NAME ?: 'develop'}"
                 echo "=========================================="
             }
-            
-            // Limpiar workspace al final
             cleanWs()
         }
         success {
+            echo "Build completado exitosamente!"
             script {
-                echo "✅ Build completado exitosamente!"
                 sh '''
-                    echo "Artefactos disponibles:"
-                    ls -lh artifacts/ 2>/dev/null || echo "No hay artefactos en artifacts/"
-                    echo ""
-                    echo "Imágenes Docker disponibles:"
-                    docker images | grep ecommerce-boot | head -10
+                    echo "Artefactos disponibles en:"
+                    find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" -exec echo "  - {}" \\;
                 '''
             }
         }
         failure {
-            script {
-                echo "❌ Build falló!"
-                // Publicar logs de error
-                sh '''
-                    echo "Últimos logs de error:"
-                    tail -50 /var/log/jenkins/*.log 2>/dev/null || echo "No se encontraron logs adicionales"
-                '''
-            }
-        }
-        unstable {
-            echo "⚠️ Build inestable - algunas pruebas fallaron"
+            echo "Build falló!"
         }
     }
 }
-
-/**
- * Función para construir un microservicio específico
- */
-def buildMicroservice(String serviceName, String port) {
-    echo "Construyendo microservicio: ${serviceName}"
-    
-    try {
-        sh """
-            echo "=========================================="
-            echo "Building: ${serviceName}"
-            echo "=========================================="
-            ./mvnw clean compile -pl ${serviceName} -am -q
-            ./mvnw package -pl ${serviceName} -DskipTests -q
-            
-            echo "Verificando JAR generado..."
-            ls -lh ${serviceName}/target/*.jar || echo "JAR no encontrado"
-        """
-        
-        echo "✅ ${serviceName} construido exitosamente"
-    } catch (Exception e) {
-        echo "❌ Error construyendo ${serviceName}: ${e.getMessage()}"
-        throw e
-    }
-}
-
-/**
- * Función para construir imagen Docker de un microservicio
- */
-def buildDockerImage(String serviceName, String port) {
-    echo "Construyendo imagen Docker: ${serviceName}"
-    
-    try {
-        def imageName = "${env.DOCKER_REGISTRY}/${serviceName}-ecommerce-boot"
-        def imageTag = "${imageName}:${env.PROJECT_VERSION}"
-        def imageTagLatest = "${imageName}:latest"
-        
-        sh """
-            echo "=========================================="
-            echo "Building Docker Image: ${serviceName}"
-            echo "=========================================="
-            
-            # Verificar que el JAR existe (el nombre del JAR usa PROJECT_VERSION que es 0.1.0)
-            JAR_FILE=\$(find ${serviceName}/target -name "${serviceName}-v*.jar" -not -name "*-original.jar" | head -1)
-            if [ -z "\$JAR_FILE" ] || [ ! -f "\$JAR_FILE" ]; then
-                echo "❌ JAR no encontrado para ${serviceName}"
-                echo "Buscando en: ${serviceName}/target/"
-                ls -la ${serviceName}/target/ || echo "Directorio target no existe"
-                exit 1
-            fi
-            echo "JAR encontrado: \$JAR_FILE"
-            
-            # Construir imagen
-            docker build -t ${imageTag} \\
-                --build-arg PROJECT_VERSION=${env.PROJECT_VERSION} \\
-                -f ${serviceName}/Dockerfile .
-            
-            # Tag como latest
-            docker tag ${imageTag} ${imageTagLatest}
-            
-            # Verificar imagen
-            docker images ${imageTag} --format "{{.Repository}}:{{.Tag}} - {{.Size}}"
-        """
-        
-        echo "Imagen Docker ${imageTag} construida exitosamente"
-    } catch (Exception e) {
-        echo "Error construyendo imagen Docker para ${serviceName}: ${e.getMessage()}"
-        throw e
-    }
-}
-
