@@ -379,14 +379,14 @@ def buildDockerImage(String serviceName, String port) {
             echo "=========================================="
             
             # Verificar que el JAR existe (el nombre del JAR usa PROJECT_VERSION que es 0.1.0)
-            JAR_FILE=$(find ${serviceName}/target -name "${serviceName}-v*.jar" -not -name "*-original.jar" | head -1)
-            if [ -z "$JAR_FILE" ] || [ ! -f "$JAR_FILE" ]; then
+            JAR_FILE=\$(find ${serviceName}/target -name "${serviceName}-v*.jar" -not -name "*-original.jar" | head -1)
+            if [ -z "\$JAR_FILE" ] || [ ! -f "\$JAR_FILE" ]; then
                 echo "❌ JAR no encontrado para ${serviceName}"
                 echo "Buscando en: ${serviceName}/target/"
                 ls -la ${serviceName}/target/ || echo "Directorio target no existe"
                 exit 1
             fi
-            echo "✅ JAR encontrado: $JAR_FILE"
+            echo "JAR encontrado: \$JAR_FILE"
             
             # Construir imagen
             docker build -t ${imageTag} \\
@@ -400,9 +400,9 @@ def buildDockerImage(String serviceName, String port) {
             docker images ${imageTag} --format "{{.Repository}}:{{.Tag}} - {{.Size}}"
         """
         
-        echo "✅ Imagen Docker ${imageTag} construida exitosamente"
+        echo "Imagen Docker ${imageTag} construida exitosamente"
     } catch (Exception e) {
-        echo "❌ Error construyendo imagen Docker para ${serviceName}: ${e.getMessage()}"
+        echo "Error construyendo imagen Docker para ${serviceName}: ${e.getMessage()}"
         throw e
     }
 }
