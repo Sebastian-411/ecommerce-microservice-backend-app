@@ -39,7 +39,7 @@ pipeline {
         
         stage('Build Application') {
             steps {
-                sh '''
+                script {
                     echo "=========================================="
                     echo "Pipeline de Construcción - DEV Environment"
                     echo "=========================================="
@@ -47,6 +47,8 @@ pipeline {
                     echo "Branch: ${env.BRANCH_NAME}"
                     echo "Commit: ${env.GIT_COMMIT_SHORT}"
                     echo "=========================================="
+                }
+                sh '''
                     echo ""
                     echo "Construyendo todos los microservicios..."
                     echo "=========================================="
