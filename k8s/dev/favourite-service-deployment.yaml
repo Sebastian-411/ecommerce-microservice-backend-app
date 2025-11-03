@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: favourite-service
+  namespace: ecommerce-dev
+  labels:
+    app: favourite-service
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: favourite-service
+  template:
+    metadata:
+      labels:
+        app: favourite-service
+        version: v1
+    spec:
+      containers:
+      - name: favourite-service
+        image: selimhorri/favourite-service-ecommerce-boot:0.1.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8800
+          name: http
+          protocol: TCP
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "dev"
+        - name: SPRING_ZIPKIN_BASE_URL
+          value: "http://zipkin-service:9411/"
+        - name: SPRING_CONFIG_IMPORT
+          value: "optional:configserver:http://cloud-config:9296"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8800
+          initialDelaySeconds: 90
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8800
+          initialDelaySeconds: 60
+          periodSeconds: 5
+

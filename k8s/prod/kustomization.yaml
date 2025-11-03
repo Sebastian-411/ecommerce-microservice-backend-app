@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce-prod
+
+resources:
+  - namespace.yaml
+
+patchesStrategicMerge:
+  - ../dev/service-discovery-deployment.yaml
+  - ../dev/service-discovery-service.yaml
+  - ../dev/cloud-config-deployment.yaml
+  - ../dev/cloud-config-service.yaml
+  - ../dev/zipkin-deployment.yaml
+  - ../dev/zipkin-service.yaml
+  - ../dev/api-gateway-deployment.yaml
+  - ../dev/api-gateway-service.yaml
+  - ../dev/proxy-client-deployment.yaml
+  - ../dev/proxy-client-service.yaml
+  - ../dev/user-service-deployment.yaml
+  - ../dev/user-service-service.yaml
+  - ../dev/product-service-deployment.yaml
+  - ../dev/product-service-service.yaml
+  - ../dev/order-service-deployment.yaml
+  - ../dev/order-service-service.yaml
+  - ../dev/payment-service-deployment.yaml
+  - ../dev/payment-service-service.yaml
+  - ../dev/shipping-service-deployment.yaml
+  - ../dev/shipping-service-service.yaml
+  - ../dev/favourite-service-deployment.yaml
+  - ../dev/favourite-service-service.yaml
+
+commonLabels:
+  environment: production
+
+patches:
+  - path: prod-overrides.yaml
+    target:
+      kind: Deployment
+
