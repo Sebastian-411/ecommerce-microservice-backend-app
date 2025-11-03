@@ -10,35 +10,23 @@ services:
       - "50000:50000"
     volumes:
       - jenkins_home:/var/jenkins_home
-      - dind-certs:/certs/client:ro
-      - //d/CodeCoding/ecommerce-microservice-backend-app:/workspace:rw # Cambiar a la ruta de tu proyecto
+      # Montar el workspace del proyecto
+      # En Windows, ajusta la ruta según tu sistema
+      - .:/workspace:rw
+      # Montar el socket de Docker del host para usar Docker directamente
+      # En Windows con Docker Desktop, la ruta puede variar
+      # Si no funciona, intenta con: /var/run/docker.sock:/var/run/docker.sock
+      - //var/run/docker.sock:/var/run/docker.sock
     environment:
-      - DOCKER_HOST=tcp://docker-dind:2376
-      - DOCKER_CERT_PATH=/certs/client
-      - DOCKER_TLS_VERIFY=1
+      - JAVA_OPTS=-Xmx2048m -Xms512m
+      - JENKINS_OPTS=--httpPort=8080
     networks:
       - jenkins-network
     restart: unless-stopped
-
-  docker-dind:
-    image: docker:dind
-    container_name: docker-dind
     privileged: true
-    volumes:
-      - docker-storage:/var/lib/docker
-      - dind-certs:/certs/client
-    networks:
-      - jenkins-network
-    restart: unless-stopped
-    environment:
-      - DOCKER_TLS_CERTDIR=/certs
-    expose:
-      - "2376"
 
 volumes:
   jenkins_home:
-  docker-storage:
-  dind-certs:
 
 networks:
   jenkins-network:

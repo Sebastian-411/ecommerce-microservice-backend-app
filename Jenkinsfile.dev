@@ -10,7 +10,8 @@ pipeline {
         // Configuración del entorno
         ENVIRONMENT = 'dev'
         DOCKER_REGISTRY = 'selimhorri'
-        PROJECT_VERSION = "${env.BUILD_NUMBER}"
+        PROJECT_VERSION = '0.1.0'  // Versión del proyecto desde pom.xml
+        BUILD_VERSION = "${env.BUILD_NUMBER}"  // Versión del build de Jenkins
         JAVA_VERSION = '11'
         MAVEN_OPTS = '-Xmx3072m -XX:MaxPermSize=512m'
         
@@ -63,13 +64,21 @@ pipeline {
         
         stage('Checkout') {
             steps {
-                checkout scm
                 script {
-                    env.GIT_COMMIT_SHORT = sh(
-                        script: 'git rev-parse --short HEAD',
-                        returnStdout: true
-                    ).trim()
-                    env.GIT_BRANCH = env.BRANCH_NAME
+                    // Intentar checkout si hay SCM configurado
+                    try {
+                        checkout scm
+                        env.GIT_COMMIT_SHORT = sh(
+                            script: 'git rev-parse --short HEAD 2>/dev/null || echo "N/A"',
+                            returnStdout: true
+                        ).trim()
+                        env.GIT_BRANCH = env.BRANCH_NAME ?: 'local'
+                    } catch (Exception e) {
+                        echo "⚠️  No hay SCM configurado, usando código local"
+                        echo "Si estás usando Pipeline Script Directo, esto es normal"
+                        env.GIT_COMMIT_SHORT = 'local'
+                        env.GIT_BRANCH = 'local'
+                    }
                 }
             }
         }
@@ -369,11 +378,15 @@ def buildDockerImage(String serviceName, String port) {
             echo "Building Docker Image: ${serviceName}"
             echo "=========================================="
             
-            # Verificar que el JAR existe
-            if [ ! -f "${serviceName}/target/${serviceName}-v${env.PROJECT_VERSION}.jar" ]; then
+            # Verificar que el JAR existe (el nombre del JAR usa PROJECT_VERSION que es 0.1.0)
+            JAR_FILE=$(find ${serviceName}/target -name "${serviceName}-v*.jar" -not -name "*-original.jar" | head -1)
+            if [ -z "$JAR_FILE" ] || [ ! -f "$JAR_FILE" ]; then
                 echo "❌ JAR no encontrado para ${serviceName}"
+                echo "Buscando en: ${serviceName}/target/"
+                ls -la ${serviceName}/target/ || echo "Directorio target no existe"
                 exit 1
             fi
+            echo "✅ JAR encontrado: $JAR_FILE"
             
             # Construir imagen
             docker build -t ${imageTag} \\
