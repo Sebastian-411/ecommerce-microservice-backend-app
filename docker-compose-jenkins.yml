@@ -17,6 +17,7 @@ services:
       # En Windows con Docker Desktop, la ruta puede variar
       # Si no funciona, intenta con: /var/run/docker.sock:/var/run/docker.sock
       - //var/run/docker.sock:/var/run/docker.sock
+      - ~/.kube:/root/.kube:ro
     environment:
       - JAVA_OPTS=-Xmx2048m -Xms512m
       - JENKINS_OPTS=--httpPort=8080
