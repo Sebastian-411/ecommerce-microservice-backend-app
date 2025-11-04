@@ -703,7 +703,7 @@ pipeline {
                     
                     echo ""
                     echo "=== Pods en estado Error/CrashLoopBackOff ==="
-                    kubectl get pods -n ${KUBECTL_NAMESPACE} -o json | jq -r '.items[] | select(.status.phase != "Running") | "\(.metadata.name): \(.status.phase)"' || true
+                    kubectl get pods -n ${KUBECTL_NAMESPACE} -o json | jq -r '.items[] | select(.status.phase != "Running") | (.metadata.name + ": " + .status.phase)' || true
                     
                     echo ""
                     echo "=== Logs de pods fallidos ==="
