@@ -26,23 +26,30 @@ services:
     networks:
       - jenkins-network
     restart: unless-stopped
+    depends_on:
+      kubectl-proxy:
+        condition: service_healthy
+
 
   kubectl-proxy:
     image: bitnami/kubectl:latest
     container_name: kubectl-proxy
-    # montamos las mismas credenciales del host
+    entrypoint: ["/bin/bash"]
+    command: ["/kubectl-proxy-init.sh"]
     volumes:
-      - ${USERPROFILE}/.kube:/root/.kube:ro
-      - ${USERPROFILE}/.minikube:/root/.minikube:ro
-    command: >
-      /bin/sh -lc '
-      kubectl config use-context minikube &&
-      kubectl proxy --port=8001 --address=0.0.0.0 --accept-hosts=".*"
-      '
+      - "C:/Users/Juan Diaz/.kube:/root/.kube:rw"
+      - "C:/Users/Juan Diaz/.minikube:/root/.minikube:ro"
+      - "./kubectl-proxy-init.sh:/kubectl-proxy-init.sh:ro"
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8001/version >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    restart: unless-stopped
     networks:
       - jenkins-network
-    restart: unless-stopped
-    # no hace falta publicar el puerto al host; con la red interna basta
 
 volumes:
   jenkins_home:

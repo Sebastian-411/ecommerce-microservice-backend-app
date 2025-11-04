@@ -1,7 +1,7 @@
 # Dockerfile base optimizado para microservicios Spring Boot
 # Multi-stage build para reducir tamaño de imagen final
 
-FROM openjdk:11-jdk-slim AS build
+FROM eclipse-temurin:11-jdk AS build
 WORKDIR /app
 
 # Copiar pom.xml y descargar dependencias (cache layer)
@@ -13,7 +13,7 @@ COPY . .
 RUN ./mvnw clean package -DskipTests
 
 # Stage final: imagen runtime mínima
-FROM openjdk:11-jre-slim
+FROM eclipse-temurin:11-jre
 WORKDIR /home/app
 
 # Crear usuario no-root para seguridad

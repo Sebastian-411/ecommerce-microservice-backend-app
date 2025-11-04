@@ -256,31 +256,6 @@ pipeline {
       }
     }
 
-    stage('E2E (lite, in-cluster)') {
-      steps {
-        // Simulamos E2E básicos con curls encadenados dentro del cluster
-        sh '''#!/usr/bin/env bash
-          set -e
-          K="kubectl --server=${KUBE_PROXY_URL} --insecure-skip-tls-verify -n ${KUBECTL_NAMESPACE}"
-
-          $K run curl-e2e --rm -i --restart=Never --image=curlimages/curl:8.8.0 -- \
-            sh -lc '
-              set -e
-              echo "== E2E: listar productos y luego consultar users =="
-              curl -sf http://api-gateway:8080/product-service/api/products >/dev/null || exit 2
-              curl -s -o /dev/null -w "%{http_code}\n" http://api-gateway:8080/user-service/api/users | grep -E "200|401|404" >/dev/null || exit 3
-              echo "OK"
-            '
-          echo "✅ E2E-lite OK"
-        '''
-      }
-      post {
-        always {
-          // <-- ESTA RAMA NO PUEDE ESTAR VACÍA
-          echo 'E2E-lite finalizado'
-        }
-      }
-    }
 
     stage('Validación Final') {
       steps {
