@@ -90,8 +90,30 @@ class UserServiceUnitTest {
 	@Test
 	@DisplayName("Test 1: Should find all users successfully")
 	void testFindAll_ShouldReturnListOfUsers() {
-		// Given
-		List<User> users = Arrays.asList(user, user);
+		// Given - Create two different users with different IDs
+		Credential credential2 = Credential.builder()
+			.credentialId(2)
+			.username("janedoe")
+			.password("password456")
+			.roleBasedAuthority(RoleBasedAuthority.ROLE_USER)
+			.isEnabled(true)
+			.isAccountNonExpired(true)
+			.isAccountNonLocked(true)
+			.isCredentialsNonExpired(true)
+			.build();
+		
+		User user2 = User.builder()
+			.userId(2)
+			.firstName("Jane")
+			.lastName("Doe")
+			.email("jane.doe@example.com")
+			.phone("0987654321")
+			.credential(credential2)
+			.build();
+		
+		credential2.setUser(user2);
+		
+		List<User> users = Arrays.asList(user, user2);
 		when(userRepository.findAll()).thenReturn(users);
 		
 		// When
