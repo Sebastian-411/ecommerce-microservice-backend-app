@@ -90,7 +90,8 @@ pipeline {
                         echo "----------------------------------------"
                         
                         # Ejecutar tests, generar reporte y validar cobertura
-                        if ./mvnw test jacoco:report jacoco:check -pl ${service}; then
+                        # verify ejecutará el execution jacoco-check configurado en el phase verify
+                        if ./mvnw test jacoco:report verify -pl ${service}; then
                             echo "${service}: Cobertura ≥50%"
                         else
                             echo "${service}: Cobertura <50% o error en la validación"
