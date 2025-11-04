@@ -276,7 +276,8 @@ pipeline {
       }
       post {
         always {
-          // nada que publicar (si quisieras, podrías generar reportes aquí)
+          // <-- ESTA RAMA NO PUEDE ESTAR VACÍA
+          echo 'E2E-lite finalizado'
         }
       }
     }
