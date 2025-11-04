@@ -128,8 +128,10 @@ pipeline {
                 '''
                 
                 // Configurar contexto de Kubernetes
-                sh """
-                    echo "Configurando contexto de Kubernetes: \${KUBERNETES_CONTEXT}"
+                script {
+                    def context = env.KUBERNETES_CONTEXT ?: 'minikube'
+                    sh """
+                        echo "Configurando contexto de Kubernetes: ${context}"
                     
                     # Generar kubeconfig limpio desde minikube si está disponible
                     # Esto evita problemas con rutas de Windows
@@ -194,8 +196,8 @@ KUBECONFIGEOF
                     fi
                     
                     # Cambiar al contexto correcto
-                    kubectl config use-context \${KUBERNETES_CONTEXT} 2>/dev/null || {
-                        echo "⚠️  No se pudo cambiar al contexto \${KUBERNETES_CONTEXT}"
+                    kubectl config use-context ${context} 2>/dev/null || {
+                        echo "⚠️  No se pudo cambiar al contexto ${context}"
                         echo "Listando contextos disponibles:"
                         kubectl config get-contexts || true
                         echo "Usando contexto actual o por defecto"
@@ -213,7 +215,8 @@ KUBECONFIGEOF
                         exit 1
                     }
                     echo "✅ Acceso a Kubernetes verificado"
-                """
+                    """
+                }
                 
                 // Configurar Docker para minikube si es necesario
                 sh """
