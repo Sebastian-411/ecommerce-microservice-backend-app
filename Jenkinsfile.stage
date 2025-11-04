@@ -159,7 +159,7 @@ pipeline {
                         sed -i 's|/root/.kube/C:\\\\Users\\\\[^\\\\]*\\\\.minikube|/root/.minikube|g' /root/.kube/config || true
                         
                         # Convertir TODAS las barras invertidas a barras normales en rutas de minikube
-                        # Esto maneja casos como /root/.minikube\profiles\minikube\client.crt
+                        # Esto maneja casos como /root/.minikube/profiles/minikube/client.crt (con barras invertidas de Windows)
                         sed -i 's|/root/\\.minikube|/root/.minikube|g' /root/.kube/config || true
                         sed -i 's|/root/.minikube\\\\|/root/.minikube/|g' /root/.kube/config || true
                         sed -i 's|/root/.minikube\\|/root/.minikube/|g' /root/.kube/config || true
