@@ -1,0 +1,183 @@
+/*
+ * Pipeline para construcción de microservicios en entorno DEV
+ * Define los pipelines que permiten la construcción de la aplicación (dev environment)
+ */
+
+pipeline {
+    agent any
+    
+    environment {
+        ENVIRONMENT = 'dev'
+        PROJECT_VERSION = '0.1.0'
+        JAVA_VERSION = '11'
+        MAVEN_OPTS = '-Xmx3072m -XX:MaxPermSize=512m'
+    }
+    
+    tools {
+        maven 'Maven-3.8'
+        jdk 'JDK-11'
+    }
+    
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD 2>/dev/null || echo "N/A"',
+                        returnStdout: true
+                    ).trim()
+                }
+            }
+        }
+        
+        stage('Build Application') {
+                    steps {
+                        script {
+                    echo "=========================================="
+                    echo "Pipeline de Construcción - DEV Environment"
+                    echo "=========================================="
+                    echo "Versión del Build: 0.1.0"
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo "Commit: ${env.GIT_COMMIT_SHORT}"
+                    echo "=========================================="
+                }
+                sh '''
+                    echo ""
+                    echo "Construyendo todos los microservicios con tests..."
+                    echo "=========================================="
+                    
+                    # Construir la aplicación completa con tests
+                    ./mvnw clean test package
+                    
+                    echo ""
+                    echo "=========================================="
+                    echo "Verificando artefactos generados..."
+                    echo "=========================================="
+                    find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" | sort
+                    echo ""
+                    echo "Resumen de artefactos:"
+                    find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" -exec ls -lh {} \\;
+                '''
+                archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: false, excludes: '**/target/*-original.jar'
+            }
+        }
+        
+        stage('Unit Tests & Coverage') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Ejecutando Unit Tests y Validando Cobertura (≥50%)"
+                    echo "=========================================="
+                }
+                sh '''
+                    echo ""
+                    echo "Ejecutando tests y validando cobertura para cada servicio..."
+                    echo "=========================================="
+                    
+                    # Validar cobertura para cada servicio
+                    failed_count=0
+                    
+                    for service in user-service product-service order-service favourite-service payment-service shipping-service; do
+                        echo ""
+                        echo "Procesando ${service}..."
+                        echo "----------------------------------------"
+                        
+                        # Ejecutar tests, generar reporte y validar cobertura
+                        # verify ejecutará el execution jacoco-check configurado en el phase verify
+                        if ./mvnw test jacoco:report verify -pl ${service}; then
+                            echo "${service}: Cobertura ≥50%"
+                        else
+                            echo "${service}: Cobertura <50% o error en la validación"
+                            failed_count=$((failed_count + 1))
+                        fi
+                    done
+                    
+                    if [ $failed_count -gt 0 ]; then
+                        echo ""
+                        echo "=========================================="
+                        echo "ERROR: $failed_count servicio(s) no cumplen con el 50% de cobertura o fallaron los tests"
+                        echo "=========================================="
+                        exit 1
+                    else
+                        echo ""
+                        echo "=========================================="
+                        echo "✅ Todos los servicios cumplen con el 50% de cobertura"
+                        echo "=========================================="
+                    fi
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: '**/target/site/jacoco/**/*', allowEmptyArchive: true
+                }
+            }
+        }
+        
+        stage('Build Validation') {
+            steps {
+                sh '''
+                    echo "=========================================="
+                    echo "Validando construcción..."
+                    echo "=========================================="
+                    
+                    # Verificar que los artefactos principales fueron generados
+                    missing=0
+                    
+                    for service in service-discovery cloud-config api-gateway proxy-client user-service product-service favourite-service order-service payment-service shipping-service; do
+                        jar_file=$(find ${service}/target -name "${service}-v*.jar" -not -name "*-original.jar" 2>/dev/null | head -1)
+                        if [ -f "$jar_file" ]; then
+                            echo "${service}: $(basename $jar_file)"
+                        else
+                            echo "${service}: JAR no encontrado"
+                            missing=$((missing + 1))
+                        fi
+                    done
+                    
+                    if [ $missing -gt 0 ]; then
+                        echo ""
+                        echo "Advertencia: $missing servicio(s) sin JAR generado"
+                        exit 1
+                    else
+                    echo ""
+                        echo "Todos los microservicios fueron construidos exitosamente"
+                    fi
+                '''
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                echo "=========================================="
+                echo "Resumen del Build - DEV Environment"
+                echo "=========================================="
+                echo "Build Number: ${env.BUILD_NUMBER}"
+                echo "Estado: ${currentBuild.currentResult}"
+                echo "Commit: ${env.GIT_COMMIT_SHORT}"
+                echo "Branch: ${env.BRANCH_NAME ?: 'develop'}"
+                echo "=========================================="
+            }
+            cleanWs()
+        }
+        success {
+            echo "Build completado exitosamente!"
+            script {
+                sh '''
+                    echo "Artefactos disponibles en:"
+                    find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" -exec echo "  - {}" \\;
+                '''
+            }
+        }
+        failure {
+            echo "Build falló!"
+            }
+        }
+}

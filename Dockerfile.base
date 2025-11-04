@@ -1,0 +1,42 @@
+# Dockerfile base optimizado para microservicios Spring Boot
+# Multi-stage build para reducir tamaño de imagen final
+
+FROM openjdk:11-jdk-slim AS build
+WORKDIR /app
+
+# Copiar pom.xml y descargar dependencias (cache layer)
+COPY pom.xml .
+COPY */pom.xml ./
+
+# Copiar código fuente y compilar
+COPY . .
+RUN ./mvnw clean package -DskipTests
+
+# Stage final: imagen runtime mínima
+FROM openjdk:11-jre-slim
+WORKDIR /home/app
+
+# Crear usuario no-root para seguridad
+RUN groupadd -r spring && useradd -r -g spring spring
+RUN chown -R spring:spring /home/app
+
+# Copiar JAR desde stage de build
+ARG PROJECT_VERSION=0.1.0
+ARG SERVICE_NAME
+COPY --from=build /app/${SERVICE_NAME}/target/${SERVICE_NAME}-v${PROJECT_VERSION}.jar app.jar
+
+# Cambiar a usuario no-root
+USER spring:spring
+
+# Variables de entorno
+ENV SPRING_PROFILES_ACTIVE=dev
+ENV JAVA_OPTS="-Xmx512m -Xms256m"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:${PORT}/actuator/health || exit 1
+
+EXPOSE ${PORT}
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -Dspring.profiles.active=${SPRING_PROFILES_ACTIVE} -jar app.jar"]
+

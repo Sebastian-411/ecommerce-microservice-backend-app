@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # Montar el workspace del proyecto
+      # En Windows, ajusta la ruta según tu sistema
+      - .:/workspace:rw
+      # Montar el socket de Docker del host para usar Docker directamente
+      # En Windows con Docker Desktop, la ruta puede variar
+      # Si no funciona, intenta con: /var/run/docker.sock:/var/run/docker.sock
+      - //var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - JAVA_OPTS=-Xmx2048m -Xms512m
+      - JENKINS_OPTS=--httpPort=8080
+    networks:
+      - jenkins-network
+    restart: unless-stopped
+    privileged: true
+
+volumes:
+  jenkins_home:
+
+networks:
+  jenkins-network:
+    driver: bridge
+

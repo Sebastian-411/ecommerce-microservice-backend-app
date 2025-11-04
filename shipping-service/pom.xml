@@ -108,6 +108,56 @@
 					</excludes>
 				</configuration>
 			</plugin>
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>${jacoco.version}</version>
+				<executions>
+					<execution>
+						<id>jacoco-initialize</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>jacoco-site</id>
+						<phase>package</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>jacoco-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<rule>
+									<element>BUNDLE</element>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>0.60</minimum>
+										</limit>
+									</limits>
+									<excludes>
+										<exclude>com.selimhorri.app.config.**</exclude>
+										<exclude>com.selimhorri.app.constant.**</exclude>
+										<exclude>com.selimhorri.app.exception.**</exclude>
+										<exclude>com.selimhorri.app.dto.**</exclude>
+										<exclude>com.selimhorri.app.domain.**</exclude>
+										<exclude>com.selimhorri.app.helper.**</exclude>
+										<exclude>com.selimhorri.app.resource.**</exclude>
+									</excludes>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 		<finalName>${project.artifactId}-v${project.version}</finalName>
 	</build>

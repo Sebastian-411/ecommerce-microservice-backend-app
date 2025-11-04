@@ -1,5 +1,21 @@
 # e-Commerce-boot μServices 
 
+## 📚 Documentación Completa
+
+**Toda la documentación del proyecto se encuentra en [`docs/`](./docs/README.md)**
+
+### 📖 Acceso Rápido a Documentación
+
+- **[Índice Completo de Documentación](./docs/README.md)** - Documentación completa del proyecto
+- **[Configuración Jenkins/K8s](./docs/JENKINS_K8S_SETUP.md)** - Setup de Jenkins, Docker y Kubernetes
+- **[Pipelines de Desarrollo](./docs/PIPELINES_DEV.md)** - Pipelines para construcción en DEV
+- **[Pipeline de Staging](./docs/PIPELINE_STAGE.md)** - Pipeline con pruebas desplegadas (Punto 4)
+- **[Pipeline de Despliegue](./docs/PIPELINE_DEPLOY.md)** - Pipeline de despliegue con validación (Punto 5)
+- **[Pruebas](./docs/TESTS_README.md)** - Documentación completa de pruebas
+- **[Cobertura de Código](./docs/UNIT_TEST_COVERAGE.md)** - Cobertura ≥80% requerida
+
+---
+
 ## Important Note: This project's new milestone is to move The whole system to work on Kubernetes, so stay tuned.
 
 <!--## Better Code Hub

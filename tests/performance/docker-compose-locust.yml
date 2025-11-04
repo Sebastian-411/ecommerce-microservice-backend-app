@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  locust-master:
+    image: locustio/locust:latest
+    ports:
+      - "8089:8089"
+      - "5557:5557"
+    volumes:
+      - ./locustfile.py:/mnt/locust/locustfile.py
+      - ./reports:/mnt/locust/reports
+    command: -f /mnt/locust/locustfile.py --master -H http://api-gateway:8080
+    networks:
+      - test-network
+    depends_on:
+      - api-gateway
+
+  locust-worker:
+    image: locustio/locust:latest
+    volumes:
+      - ./locustfile.py:/mnt/locust/locustfile.py
+    command: -f /mnt/locust/locustfile.py --worker --master-host locust-master
+    networks:
+      - test-network
+    depends_on:
+      - locust-master
+    scale: 2
+
+networks:
+  test-network:
+    external: true
+

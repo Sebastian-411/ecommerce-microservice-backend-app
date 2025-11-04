@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ecommerce-dev
+
+resources:
+  - namespace.yaml
+  - service-discovery-deployment.yaml
+  - service-discovery-service.yaml
+  - cloud-config-deployment.yaml
+  - cloud-config-service.yaml
+  - zipkin-deployment.yaml
+  - zipkin-service.yaml
+  - api-gateway-deployment.yaml
+  - api-gateway-service.yaml
+  - proxy-client-deployment.yaml
+  - proxy-client-service.yaml
+  - user-service-deployment.yaml
+  - user-service-service.yaml
+  - product-service-deployment.yaml
+  - product-service-service.yaml
+  - order-service-deployment.yaml
+  - order-service-service.yaml
+  - payment-service-deployment.yaml
+  - payment-service-service.yaml
+  - shipping-service-deployment.yaml
+  - shipping-service-service.yaml
+  - favourite-service-deployment.yaml
+  - favourite-service-service.yaml
+
