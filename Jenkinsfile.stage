@@ -172,22 +172,10 @@ pipeline {
                         sed -i 's|certificate-authority: /root/.minikube[^[:space:]]*\\\\|certificate-authority: /root/.minikube/|g' /root/.kube/config || true
                         
                         # Reemplazo adicional: convertir todas las barras invertidas a barras normales en líneas que contengan minikube
-                        # Usar un script temporal para evitar problemas de escape de Groovy
-                        cat > /tmp/fix_kubeconfig.sh << 'FIXSCRIPT'
-#!/bin/bash
-# Script para corregir rutas de Windows en kubeconfig
-config_file=/root/.kube/config
-if [ -f "$config_file" ]; then
-    # Usar awk para reemplazar todas las barras invertidas por barras normales en líneas con minikube
-    awk '/minikube/ {gsub(/\\/, "/"); print} !/minikube/ {print}' "$config_file" > "$config_file.tmp"
-    mv "$config_file.tmp" "$config_file"
-    # Pasada adicional con sed para asegurar
-    sed -i '/minikube/s/\\/\//g' "$config_file" || true
-fi
-FIXSCRIPT
-                        chmod +x /tmp/fix_kubeconfig.sh
-                        /tmp/fix_kubeconfig.sh || echo "⚠️  Error ejecutando script de corrección"
-                        rm -f /tmp/fix_kubeconfig.sh
+                        # Usar awk directamente para evitar problemas de escape de Groovy
+                        awk '/minikube/ {gsub(/\\\\/, "/"); print} !/minikube/ {print}' /root/.kube/config > /root/.kube/config.tmp && mv /root/.kube/config.tmp /root/.kube/config || true
+                        # Pasada adicional con tr que es más simple
+                        tr '\\\\' '/' < /root/.kube/config | sed '/minikube/!b; s|/root/.minikube[^/]*|/root/.minikube|g' > /root/.kube/config.tmp2 && mv /root/.kube/config.tmp2 /root/.kube/config || true
                         
                         echo "Verificando corrección de rutas..."
                         echo "Rutas de certificados encontradas:"
