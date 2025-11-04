@@ -19,10 +19,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.selimhorri.app.domain.Credential;
+import com.selimhorri.app.domain.RoleBasedAuthority;
 import com.selimhorri.app.domain.User;
+import com.selimhorri.app.dto.CredentialDto;
 import com.selimhorri.app.dto.UserDto;
 import com.selimhorri.app.exception.wrapper.UserObjectNotFoundException;
-import com.selimhorri.app.helper.UserMappingHelper;
 import com.selimhorri.app.repository.UserRepository;
 import com.selimhorri.app.service.impl.UserServiceImpl;
 
@@ -38,23 +40,51 @@ class UserServiceUnitTest {
 	
 	private UserDto userDto;
 	private User user;
+	private Credential credential;
 	
 	@BeforeEach
 	void setUp() {
+		credential = Credential.builder()
+			.credentialId(1)
+			.username("johndoe")
+			.password("password123")
+			.roleBasedAuthority(RoleBasedAuthority.ROLE_USER)
+			.isEnabled(true)
+			.isAccountNonExpired(true)
+			.isAccountNonLocked(true)
+			.isCredentialsNonExpired(true)
+			.build();
+		
+		user = User.builder()
+			.userId(1)
+			.firstName("John")
+			.lastName("Doe")
+			.email("john.doe@example.com")
+			.phone("1234567890")
+			.credential(credential)
+			.build();
+		
+		credential.setUser(user);
+		
+		CredentialDto credentialDto = CredentialDto.builder()
+			.credentialId(1)
+			.username("johndoe")
+			.password("password123")
+			.roleBasedAuthority(RoleBasedAuthority.ROLE_USER)
+			.isEnabled(true)
+			.isAccountNonExpired(true)
+			.isAccountNonLocked(true)
+			.isCredentialsNonExpired(true)
+			.build();
+		
 		userDto = UserDto.builder()
 			.userId(1)
 			.firstName("John")
 			.lastName("Doe")
 			.email("john.doe@example.com")
 			.phone("1234567890")
+			.credentialDto(credentialDto)
 			.build();
-		
-		user = new User();
-		user.setUserId(1);
-		user.setFirstName("John");
-		user.setLastName("Doe");
-		user.setEmail("john.doe@example.com");
-		user.setPhone("1234567890");
 	}
 	
 	@Test
@@ -123,17 +153,45 @@ class UserServiceUnitTest {
 	@DisplayName("Test 5: Should update user successfully")
 	void testUpdate_ShouldReturnUpdatedUserDto() {
 		// Given
+		CredentialDto updatedCredentialDto = CredentialDto.builder()
+			.credentialId(1)
+			.username("janedoe")
+			.password("password123")
+			.roleBasedAuthority(RoleBasedAuthority.ROLE_USER)
+			.isEnabled(true)
+			.isAccountNonExpired(true)
+			.isAccountNonLocked(true)
+			.isCredentialsNonExpired(true)
+			.build();
+		
 		UserDto updatedDto = UserDto.builder()
 			.userId(1)
 			.firstName("Jane")
 			.lastName("Doe")
 			.email("jane.doe@example.com")
+			.credentialDto(updatedCredentialDto)
 			.build();
-		User updatedUser = new User();
-		updatedUser.setUserId(1);
-		updatedUser.setFirstName("Jane");
-		updatedUser.setLastName("Doe");
-		updatedUser.setEmail("jane.doe@example.com");
+		
+		Credential updatedCredential = Credential.builder()
+			.credentialId(1)
+			.username("janedoe")
+			.password("password123")
+			.roleBasedAuthority(RoleBasedAuthority.ROLE_USER)
+			.isEnabled(true)
+			.isAccountNonExpired(true)
+			.isAccountNonLocked(true)
+			.isCredentialsNonExpired(true)
+			.build();
+		
+		User updatedUser = User.builder()
+			.userId(1)
+			.firstName("Jane")
+			.lastName("Doe")
+			.email("jane.doe@example.com")
+			.credential(updatedCredential)
+			.build();
+		
+		updatedCredential.setUser(updatedUser);
 		
 		when(userRepository.save(any(User.class))).thenReturn(updatedUser);
 		
@@ -194,11 +252,23 @@ class UserServiceUnitTest {
 	void testUpdateWithId_ShouldReturnUpdatedUserDto() {
 		// Given
 		Integer userId = 1;
+		CredentialDto updatedCredentialDto = CredentialDto.builder()
+			.credentialId(1)
+			.username("janeupdated")
+			.password("password123")
+			.roleBasedAuthority(RoleBasedAuthority.ROLE_USER)
+			.isEnabled(true)
+			.isAccountNonExpired(true)
+			.isAccountNonLocked(true)
+			.isCredentialsNonExpired(true)
+			.build();
+		
 		UserDto updatedDto = UserDto.builder()
 			.userId(1)
 			.firstName("Jane Updated")
 			.lastName("Doe Updated")
 			.email("jane.updated@example.com")
+			.credentialDto(updatedCredentialDto)
 			.build();
 		
 		when(userRepository.findById(userId)).thenReturn(Optional.of(user));
