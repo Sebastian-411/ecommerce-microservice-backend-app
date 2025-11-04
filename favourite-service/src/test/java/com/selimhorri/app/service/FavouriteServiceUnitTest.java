@@ -89,11 +89,49 @@ class FavouriteServiceUnitTest {
 	@Test
 	@DisplayName("Test 1: Should find all favourites successfully")
 	void testFindAll_ShouldReturnListOfFavourites() {
-		// Given
-		List<Favourite> favourites = Arrays.asList(favourite, favourite);
+		// Given - Create two different favourites with different IDs to avoid distinct() issues
+		LocalDateTime now2 = LocalDateTime.now().plusDays(1);
+		Favourite favourite2 = Favourite.builder()
+			.userId(2)
+			.productId(200)
+			.likeDate(now2)
+			.build();
+		
+		List<Favourite> favourites = Arrays.asList(favourite, favourite2);
 		when(favouriteRepository.findAll()).thenReturn(favourites);
-		when(restTemplate.getForObject(anyString(), any(Class.class)))
-			.thenReturn(userDto, productDto);
+		
+		// Mock RestTemplate calls - for each favourite, we need UserDto and ProductDto
+		// First favourite: userId=1, productId=100
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.USER_SERVICE_API_URL + "/1", 
+			UserDto.class))
+			.thenReturn(userDto);
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.PRODUCT_SERVICE_API_URL + "/100", 
+			ProductDto.class))
+			.thenReturn(productDto);
+		
+		// Second favourite: userId=2, productId=200
+		UserDto userDto2 = UserDto.builder()
+			.userId(2)
+			.firstName("Jane")
+			.lastName("Doe")
+			.email("jane.doe@example.com")
+			.build();
+		ProductDto productDto2 = ProductDto.builder()
+			.productId(200)
+			.productTitle("Another Product")
+			.priceUnit(199.99)
+			.build();
+		
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.USER_SERVICE_API_URL + "/2", 
+			UserDto.class))
+			.thenReturn(userDto2);
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.PRODUCT_SERVICE_API_URL + "/200", 
+			ProductDto.class))
+			.thenReturn(productDto2);
 		
 		// When
 		List<FavouriteDto> result = favouriteService.findAll();
