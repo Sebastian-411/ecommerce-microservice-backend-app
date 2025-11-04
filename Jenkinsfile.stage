@@ -173,40 +173,66 @@ pipeline {
     }
 
     stage('Push de Imágenes Docker') {
-      when { anyOf { branch 'develop'; branch 'stage'; branch 'main' } }
       steps {
         script {
           if (env.USE_LOCAL_REGISTRY == 'true') {
-            echo 'Registry local: haciendo push a localhost:5000 (minikube)…'
+            echo 'Registry local: haciendo push a localhost:5000 (minikube registry)…'
             sh '''#!/usr/bin/env bash
               set -e
               # Verificar que el registry está disponible
-              curl -s http://localhost:5000/v2/_catalog >/dev/null || {
+              echo "Verificando registry local en ${DOCKER_REGISTRY}..."
+              curl -s --connect-timeout 5 http://${DOCKER_REGISTRY}/v2/_catalog >/dev/null || {
                 echo "⚠️  Registry local no responde, pero continuamos..."
               }
               
-              # Push de imágenes al registry local
+              # Push de imágenes al registry local de Minikube
               for svc in $(echo "${ALL_SERVICES}" | tr ',' ' '); do
                 echo "Push imagen: $svc"
-                docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:$PROJECT_VERSION" || echo "⚠️  Push falló para $svc:$PROJECT_VERSION"
-                docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:latest" || echo "⚠️  Push falló para $svc:latest"
+                # Intentar push con retry
+                for attempt in 1 2 3; do
+                  if docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:$PROJECT_VERSION" 2>&1; then
+                    echo "✅ Push exitoso: $svc:$PROJECT_VERSION"
+                    break
+                  else
+                    echo "⚠️  Intento $attempt falló para $svc:$PROJECT_VERSION"
+                    [ $attempt -eq 3 ] && echo "❌ Falló después de 3 intentos para $svc:$PROJECT_VERSION"
+                    sleep 2
+                  fi
+                done
+                
+                for attempt in 1 2 3; do
+                  if docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:latest" 2>&1; then
+                    echo "✅ Push exitoso: $svc:latest"
+                    break
+                  else
+                    echo "⚠️  Intento $attempt falló para $svc:latest"
+                    [ $attempt -eq 3 ] && echo "❌ Falló después de 3 intentos para $svc:latest"
+                    sleep 2
+                  fi
+                done
               done
+              echo "✅ Proceso de push completado"
             '''
           } else {
-            withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-              sh '''#!/usr/bin/env bash
-                set -e
-                echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-              '''
-              for (svc in env.ALL_SERVICES.split(',')) {
-                withEnv(["SVC=${svc}"]) {
-                  sh '''#!/usr/bin/env bash
-                    set -e
-                    docker push "$DOCKER_REGISTRY/$SVC-ecommerce-boot:$PROJECT_VERSION"
-                    docker push "$DOCKER_REGISTRY/$SVC-ecommerce-boot:latest"
-                  '''
+            // Solo hacer push si está en una rama específica
+            if (env.BRANCH_NAME == 'develop' || env.BRANCH_NAME == 'stage' || env.BRANCH_NAME == 'main') {
+              withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                sh '''#!/usr/bin/env bash
+                  set -e
+                  echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                '''
+                for (svc in env.ALL_SERVICES.split(',')) {
+                  withEnv(["SVC=${svc}"]) {
+                    sh '''#!/usr/bin/env bash
+                      set -e
+                      docker push "$DOCKER_REGISTRY/$SVC-ecommerce-boot:$PROJECT_VERSION"
+                      docker push "$DOCKER_REGISTRY/$SVC-ecommerce-boot:latest"
+                    '''
+                  }
                 }
               }
+            } else {
+              echo 'Push a registry remoto omitido (no es rama develop/stage/main)'
             }
           }
         }
