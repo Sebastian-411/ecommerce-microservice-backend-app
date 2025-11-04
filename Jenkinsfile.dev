@@ -38,8 +38,8 @@ pipeline {
         }
         
         stage('Build Application') {
-            steps {
-                script {
+                    steps {
+                        script {
                     echo "=========================================="
                     echo "Pipeline de Construcción - DEV Environment"
                     echo "=========================================="
@@ -145,7 +145,7 @@ pipeline {
                         echo "Advertencia: $missing servicio(s) sin JAR generado"
                         exit 1
                     else
-                        echo ""
+                    echo ""
                         echo "Todos los microservicios fueron construidos exitosamente"
                     fi
                 '''
@@ -178,6 +178,6 @@ pipeline {
         }
         failure {
             echo "Build falló!"
+            }
         }
-    }
 }
