@@ -73,7 +73,7 @@ pipeline {
             steps {
                 script {
                     echo "=========================================="
-                    echo "Ejecutando Unit Tests y Validando Cobertura (≥60%)"
+                    echo "Ejecutando Unit Tests y Validando Cobertura (≥50%)"
                     echo "=========================================="
                 }
                 sh '''
@@ -91,9 +91,9 @@ pipeline {
                         
                         # Ejecutar tests, generar reporte y validar cobertura
                         if ./mvnw test jacoco:report jacoco:check -pl ${service}; then
-                            echo "${service}: Cobertura ≥60%"
+                            echo "${service}: Cobertura ≥50%"
                         else
-                            echo "${service}: Cobertura <60% o error en la validación"
+                            echo "${service}: Cobertura <50% o error en la validación"
                             failed_count=$((failed_count + 1))
                         fi
                     done
@@ -101,13 +101,13 @@ pipeline {
                     if [ $failed_count -gt 0 ]; then
                         echo ""
                         echo "=========================================="
-                        echo "ERROR: $failed_count servicio(s) no cumplen con el 60% de cobertura o fallaron los tests"
+                        echo "ERROR: $failed_count servicio(s) no cumplen con el 50% de cobertura o fallaron los tests"
                         echo "=========================================="
                         exit 1
                     else
                         echo ""
                         echo "=========================================="
-                        echo "✅ Todos los servicios cumplen con el 60% de cobertura"
+                        echo "✅ Todos los servicios cumplen con el 50% de cobertura"
                         echo "=========================================="
                     fi
                 '''
