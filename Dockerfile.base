@@ -23,7 +23,7 @@ RUN chown -R spring:spring /home/app
 # Copiar JAR desde stage de build
 ARG PROJECT_VERSION=0.1.0
 ARG SERVICE_NAME
-COPY --from=build /app/${SERVICE_NAME}/target/${SERVICE_NAME}-v${PROJECT_VERSION}.jar app.jar
+COPY --from=build /app/${SERVICE_NAME}/target/*.jar app.jar
 
 # Cambiar a usuario no-root
 USER spring:spring
