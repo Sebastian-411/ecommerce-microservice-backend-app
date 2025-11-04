@@ -4,11 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -21,7 +19,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.selimhorri.app.domain.Category;
 import com.selimhorri.app.domain.Product;
+import com.selimhorri.app.dto.CategoryDto;
 import com.selimhorri.app.dto.ProductDto;
 import com.selimhorri.app.exception.wrapper.ProductNotFoundException;
 import com.selimhorri.app.repository.ProductRepository;
@@ -39,14 +39,29 @@ class ProductServiceUnitTest {
 	
 	private ProductDto productDto;
 	private Product product;
+	private Category category;
+	private CategoryDto categoryDto;
 	
 	@BeforeEach
 	void setUp() {
+		category = Category.builder()
+			.categoryId(1)
+			.categoryTitle("Electronics")
+			.imageUrl("http://example.com/electronics.jpg")
+			.build();
+		
+		categoryDto = CategoryDto.builder()
+			.categoryId(1)
+			.categoryTitle("Electronics")
+			.imageUrl("http://example.com/electronics.jpg")
+			.build();
+		
 		productDto = ProductDto.builder()
 			.productId(1)
 			.productTitle("Laptop")
 			.priceUnit(999.99)
 			.quantity(10)
+			.categoryDto(categoryDto)
 			.build();
 		
 		product = Product.builder()
@@ -54,14 +69,29 @@ class ProductServiceUnitTest {
 			.productTitle("Laptop")
 			.priceUnit(999.99)
 			.quantity(10)
+			.category(category)
 			.build();
 	}
 	
 	@Test
 	@DisplayName("Test 1: Should find all products successfully")
 	void testFindAll_ShouldReturnListOfProducts() {
-		// Given
-		List<Product> products = Arrays.asList(product, product);
+		// Given - Create two different products with different IDs
+		Category category2 = Category.builder()
+			.categoryId(2)
+			.categoryTitle("Computers")
+			.imageUrl("http://example.com/computers.jpg")
+			.build();
+		
+		Product product2 = Product.builder()
+			.productId(2)
+			.productTitle("Desktop")
+			.priceUnit(1299.99)
+			.quantity(5)
+			.category(category2)
+			.build();
+		
+		List<Product> products = Arrays.asList(product, product2);
 		when(productRepository.findAll()).thenReturn(products);
 		
 		// When
@@ -127,12 +157,16 @@ class ProductServiceUnitTest {
 			.productId(1)
 			.productTitle("Gaming Laptop")
 			.priceUnit(1299.99)
+			.quantity(10)
+			.categoryDto(categoryDto)
 			.build();
 		
 		Product updatedProduct = Product.builder()
 			.productId(1)
 			.productTitle("Gaming Laptop")
 			.priceUnit(1299.99)
+			.quantity(10)
+			.category(category)
 			.build();
 		
 		when(productRepository.save(any(Product.class))).thenReturn(updatedProduct);
@@ -155,6 +189,8 @@ class ProductServiceUnitTest {
 			.productId(1)
 			.productTitle("Updated Laptop")
 			.priceUnit(1199.99)
+			.quantity(10)
+			.categoryDto(categoryDto)
 			.build();
 		
 		when(productRepository.findById(productId)).thenReturn(Optional.of(product));
