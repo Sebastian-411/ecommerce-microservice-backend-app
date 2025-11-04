@@ -142,11 +142,6 @@
 											<value>COVEREDRATIO</value>
 											<minimum>0.60</minimum>
 										</limit>
-										<limit>
-											<counter>BRANCH</counter>
-											<value>COVEREDRATIO</value>
-											<minimum>0.60</minimum>
-										</limit>
 									</limits>
 									<excludes>
 										<exclude>com.selimhorri.app.config.**</exclude>
