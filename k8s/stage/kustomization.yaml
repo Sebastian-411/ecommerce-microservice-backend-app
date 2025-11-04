@@ -5,8 +5,6 @@ namespace: ecommerce-stage
 
 resources:
   - namespace.yaml
-
-patchesStrategicMerge:
   - ../dev/service-discovery-deployment.yaml
   - ../dev/service-discovery-service.yaml
   - ../dev/cloud-config-deployment.yaml

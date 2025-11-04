@@ -1,9 +1,9 @@
- - op: add
-   path: /spec/template/spec/containers/0/env/-
-   value:
-     name: SPRING_PROFILES_ACTIVE
-     value: "stage"
- - op: add
-   path: /spec/template/spec/containers/0/imagePullPolicy
-   value: IfNotPresent
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: SPRING_PROFILES_ACTIVE
+    value: "stage"
+- op: replace
+  path: /spec/template/spec/containers/0/imagePullPolicy
+  value: IfNotPresent
 
