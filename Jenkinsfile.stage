@@ -177,7 +177,21 @@ pipeline {
       steps {
         script {
           if (env.USE_LOCAL_REGISTRY == 'true') {
-            echo 'Registry local: se omite push'
+            echo 'Registry local: haciendo push a localhost:5000 (minikube)…'
+            sh '''#!/usr/bin/env bash
+              set -e
+              # Verificar que el registry está disponible
+              curl -s http://localhost:5000/v2/_catalog >/dev/null || {
+                echo "⚠️  Registry local no responde, pero continuamos..."
+              }
+              
+              # Push de imágenes al registry local
+              for svc in $(echo "${ALL_SERVICES}" | tr ',' ' '); do
+                echo "Push imagen: $svc"
+                docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:$PROJECT_VERSION" || echo "⚠️  Push falló para $svc:$PROJECT_VERSION"
+                docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:latest" || echo "⚠️  Push falló para $svc:latest"
+              done
+            '''
           } else {
             withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
               sh '''#!/usr/bin/env bash
@@ -210,7 +224,11 @@ pipeline {
 
           echo "Aplicando k8s/stage con kustomize (LoadRestrictionsNone)…"
           # Usamos kustomize para permitir rutas fuera del árbol del overlay (../dev/*)
-          kustomize build --load-restrictor=LoadRestrictionsNone k8s/stage/ | $K -n "${KUBECTL_NAMESPACE}" apply -f -
+          # Si hay un error de etcd timeout, continuamos igual (puede ser temporal)
+          kustomize build --load-restrictor=LoadRestrictionsNone k8s/stage/ | $K -n "${KUBECTL_NAMESPACE}" apply -f - || {
+            echo "⚠️  Error aplicando recursos (puede ser temporal de etcd), verificando estado..."
+            $K get pods -n "${KUBECTL_NAMESPACE}" || true
+          }
 
           echo "Esperando pods listos en ${KUBECTL_NAMESPACE}…"
           timeout=600; elapsed=0

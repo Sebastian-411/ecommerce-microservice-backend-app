@@ -31,6 +31,39 @@ resources:
 commonLabels:
   environment: staging
 
+# Reemplazar imágenes con las del registry local
+images:
+  - name: selimhorri/service-discovery-ecommerce-boot
+    newName: localhost:5000/service-discovery-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/cloud-config-ecommerce-boot
+    newName: localhost:5000/cloud-config-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/api-gateway-ecommerce-boot
+    newName: localhost:5000/api-gateway-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/proxy-client-ecommerce-boot
+    newName: localhost:5000/proxy-client-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/user-service-ecommerce-boot
+    newName: localhost:5000/user-service-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/product-service-ecommerce-boot
+    newName: localhost:5000/product-service-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/favourite-service-ecommerce-boot
+    newName: localhost:5000/favourite-service-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/order-service-ecommerce-boot
+    newName: localhost:5000/order-service-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/payment-service-ecommerce-boot
+    newName: localhost:5000/payment-service-ecommerce-boot
+    newTag: latest
+  - name: selimhorri/shipping-service-ecommerce-boot
+    newName: localhost:5000/shipping-service-ecommerce-boot
+    newTag: latest
+
 patches:
   - target:
       kind: Deployment
