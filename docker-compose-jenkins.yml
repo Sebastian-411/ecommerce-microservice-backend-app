@@ -2,47 +2,47 @@ version: '3.8'
 
 services:
   jenkins:
-    # Usar imagen personalizada con Docker, kubectl y jq
     build:
       context: .
       dockerfile: Dockerfile.jenkins
     container_name: jenkins
     user: root
+    privileged: true
     ports:
       - "8080:8080"
       - "50000:50000"
     volumes:
       - jenkins_home:/var/jenkins_home
-      # Montar el workspace del proyecto
-      # En Windows, ajusta la ruta según tu sistema
       - .:/workspace:rw
-      # Montar el socket de Docker del host para usar Docker directamente
-      # En Windows con Docker Desktop, la ruta puede variar
-      # Si no funciona, intenta con: /var/run/docker.sock:/var/run/docker.sock
       - /var/run/docker.sock:/var/run/docker.sock
-      # Montar kubeconfig para acceso a Kubernetes
-      # IMPORTANTE: En Windows, ajusta la ruta según tu usuario
-      # Opción 1: Usar variable de entorno (Linux/Mac)
-      # - ${HOME}/.kube:/root/.kube:rw
-      # Opción 2: Usar ruta absoluta de Windows (ajusta el usuario)
-      # - C:/Users/TuUsuario/.kube:/root/.kube:rw
-      # Opción 3: Usar ruta actual (descomenta y ajusta):
-      - C:/Users/Juan Diaz/.kube:/root/.kube:rw
-      # Montar el perfil de minikube completo (necesario para los certificados)
-      # IMPORTANTE: En Windows, ajusta la ruta según tu usuario
-      # Opción 1: Usar variable de entorno (Linux/Mac)
-      # - ${HOME}/.minikube:/root/.minikube:ro
-      # Opción 2: Usar ruta absoluta de Windows (ajusta el usuario)
-      # - C:/Users/TuUsuario/.minikube:/root/.minikube:ro
-      # Opción 3: Usar ruta actual (descomenta y ajusta):
-      - C:/Users/Juan Diaz/.minikube:/root/.minikube:ro
+      # Credenciales K8s desde el host (Windows):
+      - ${USERPROFILE}/.kube:/root/.kube:ro
+      - ${USERPROFILE}/.minikube:/root/.minikube:ro
     environment:
       - JAVA_OPTS=-Xmx2048m -Xms512m
       - JENKINS_OPTS=--httpPort=8080
+      # Exponemos la URL del proxy para que el Jenkinsfile la use
+      - KUBE_PROXY_URL=http://kubectl-proxy:8001
     networks:
       - jenkins-network
     restart: unless-stopped
-    privileged: true
+
+  kubectl-proxy:
+    image: bitnami/kubectl:latest
+    container_name: kubectl-proxy
+    # montamos las mismas credenciales del host
+    volumes:
+      - ${USERPROFILE}/.kube:/root/.kube:ro
+      - ${USERPROFILE}/.minikube:/root/.minikube:ro
+    command: >
+      /bin/sh -lc '
+      kubectl config use-context minikube &&
+      kubectl proxy --port=8001 --address=0.0.0.0 --accept-hosts=".*"
+      '
+    networks:
+      - jenkins-network
+    restart: unless-stopped
+    # no hace falta publicar el puerto al host; con la red interna basta
 
 volumes:
   jenkins_home:
@@ -50,4 +50,3 @@ volumes:
 networks:
   jenkins-network:
     driver: bridge
-
