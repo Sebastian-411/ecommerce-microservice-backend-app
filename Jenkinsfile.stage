@@ -208,8 +208,9 @@ pipeline {
           echo "Creando namespace ${KUBECTL_NAMESPACE} si no existe…"
           $K create namespace "${KUBECTL_NAMESPACE}" --dry-run=client -o yaml | $K apply -f -
 
-          echo "Aplicando k8s/stage …"
-          $K -n "${KUBECTL_NAMESPACE}" apply -k k8s/stage/
+          echo "Aplicando k8s/stage con kustomize (LoadRestrictionsNone)…"
+          # Usamos kustomize para permitir rutas fuera del árbol del overlay (../dev/*)
+          kustomize build --load-restrictor=LoadRestrictionsNone k8s/stage/ | $K -n "${KUBECTL_NAMESPACE}" apply -f -
 
           echo "Esperando pods listos en ${KUBECTL_NAMESPACE}…"
           timeout=600; elapsed=0
