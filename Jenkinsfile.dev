@@ -50,11 +50,11 @@ pipeline {
                 }
                 sh '''
                     echo ""
-                    echo "Construyendo todos los microservicios..."
+                    echo "Construyendo todos los microservicios con tests..."
                     echo "=========================================="
                     
-                    # Construir la aplicación completa
-                    ./mvnw clean package -DskipTests
+                    # Construir la aplicación completa con tests
+                    ./mvnw clean test package
                     
                     echo ""
                     echo "=========================================="
@@ -66,6 +66,61 @@ pipeline {
                     find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" -exec ls -lh {} \\;
                 '''
                 archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: false, excludes: '**/target/*-original.jar'
+            }
+        }
+        
+        stage('Unit Tests & Coverage') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Ejecutando Unit Tests y Validando Cobertura (≥60%)"
+                    echo "=========================================="
+                }
+                sh '''
+                    echo ""
+                    echo "Ejecutando tests y validando cobertura para cada servicio..."
+                    echo "=========================================="
+                    
+                    # Validar cobertura para cada servicio
+                    failed_count=0
+                    
+                    for service in user-service product-service order-service favourite-service payment-service shipping-service; do
+                        echo ""
+                        echo "Validando ${service}..."
+                        echo "----------------------------------------"
+                        
+                        if ./mvnw jacoco:check -pl ${service}; then
+                            echo "${service}: Cobertura ≥60%"
+                        else
+                            echo "${service}: Cobertura <60%"
+                            failed_count=$((failed_count + 1))
+                        fi
+                    done
+                    
+                    if [ $failed_count -gt 0 ]; then
+                        echo ""
+                        echo "=========================================="
+                        echo "ERROR: $failed_count servicio(s) no cumplen con el 60% de cobertura"
+                        echo "=========================================="
+                        exit 1
+                    else
+                        echo ""
+                        echo "=========================================="
+                        echo "Todos los servicios cumplen con el 60% de cobertura"
+                        echo "=========================================="
+                    fi
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: '**/target/site/jacoco/**/*', allowEmptyArchive: true
+                    publishHTML([
+                        reportDir: '.',
+                        reportFiles: '**/target/site/jacoco/index.html',
+                        reportName: 'JaCoCo Coverage Report',
+                        keepAll: true
+                    ])
+                }
             }
         }
         

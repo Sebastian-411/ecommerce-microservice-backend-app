@@ -315,3 +315,251 @@ class StressTestUser(HttpUser):
             else:
                 response.failure(f"Status {response.status_code}")
 
+
+class CompleteShoppingFlowUser(HttpUser):
+    """
+    Simulates complete real-world shopping flow:
+    1. User registration/login
+    2. Browse products
+    3. Add to favourites
+    4. Create order
+    5. Process payment
+    """
+    wait_time = between(2, 5)  # Realistic shopping behavior
+    
+    def on_start(self):
+        """Initialize shopping session"""
+        self.user_id = None
+        self.product_ids = []
+        self.favourite_ids = []
+        self.order_id = None
+        self.payment_id = None
+        
+        # Register user
+        user_data = {
+            "firstName": f"ShoppingUser{random.randint(1000, 9999)}",
+            "lastName": "Test",
+            "email": f"shopping{random.randint(1000, 9999)}@example.com",
+            "phone": f"{random.randint(1000000000, 9999999999)}"
+        }
+        
+        with self.client.post("/api/users", json=user_data, catch_response=True) as response:
+            if response.status_code == 200:
+                try:
+                    user_response = response.json()
+                    self.user_id = user_response.get("userId")
+                    response.success()
+                except:
+                    response.failure("Failed to parse user response")
+            else:
+                response.failure(f"User creation failed: {response.status_code}")
+    
+    @task(5)
+    def browse_and_select_products(self):
+        """Browse products and select some for purchase"""
+        with self.client.get("/api/products", catch_response=True) as response:
+            if response.status_code == 200:
+                try:
+                    products = response.json()
+                    if "collection" in products:
+                        product_list = products["collection"]
+                        if product_list:
+                            # Select 2-3 random products
+                            selected = random.sample(product_list, min(3, len(product_list)))
+                            self.product_ids = [p.get("productId") for p in selected if p.get("productId")]
+                    response.success()
+                except:
+                    response.failure("Failed to parse products")
+            else:
+                response.failure(f"Failed to get products: {response.status_code}")
+    
+    @task(3)
+    def add_to_favourites(self):
+        """Add products to favourites"""
+        if not self.product_ids:
+            return
+        
+        if not self.user_id:
+            return
+        
+        product_id = random.choice(self.product_ids)
+        
+        from datetime import datetime
+        favourite_data = {
+            "userId": self.user_id,
+            "productId": product_id,
+            "likeDate": datetime.now().isoformat()
+        }
+        
+        with self.client.post("/api/favourites", json=favourite_data, catch_response=True) as response:
+            if response.status_code == 200:
+                try:
+                    favourite_response = response.json()
+                    fav_id = favourite_response.get("userId")  # Use user_id as part of composite key
+                    if fav_id:
+                        self.favourite_ids.append(fav_id)
+                    response.success()
+                except:
+                    response.failure("Failed to parse favourite response")
+            else:
+                response.failure(f"Failed to add favourite: {response.status_code}")
+    
+    @task(2)
+    def create_order(self):
+        """Create order with selected products"""
+        if not self.product_ids:
+            return
+        
+        # Get product details to calculate total
+        product_id = random.choice(self.product_ids)
+        
+        with self.client.get(f"/api/products/{product_id}", catch_response=True) as response:
+            if response.status_code == 200:
+                try:
+                    product = response.json()
+                    price = product.get("priceUnit", 0) or product.get("productPrice", 0)
+                    
+                    from datetime import datetime
+                    order_data = {
+                        "orderDesc": f"Order from shopping flow test - {random.randint(1000, 9999)}",
+                        "orderFee": float(price) * random.randint(1, 3),
+                        "orderDate": datetime.now().isoformat()
+                    }
+                    
+                    with self.client.post("/api/orders", json=order_data, catch_response=True) as response2:
+                        if response2.status_code == 200:
+                            try:
+                                order_response = response2.json()
+                                self.order_id = order_response.get("orderId")
+                                response2.success()
+                            except:
+                                response2.failure("Failed to parse order response")
+                        else:
+                            response2.failure(f"Order creation failed: {response2.status_code}")
+                    
+                    response.success()
+                except:
+                    response.failure("Failed to get product price")
+            else:
+                response.failure(f"Failed to get product: {response.status_code}")
+    
+    @task(1)
+    def process_payment(self):
+        """Process payment for created order"""
+        if not self.order_id:
+            return
+        
+        payment_data = {
+            "orderDto": {
+                "orderId": self.order_id
+            },
+            "isPayed": random.choice([True, False]),
+            "paymentStatus": random.choice(["NOT_STARTED", "IN_PROGRESS", "COMPLETED"])
+        }
+        
+        with self.client.post("/api/payments", json=payment_data, catch_response=True) as response:
+            if response.status_code == 200:
+                try:
+                    payment_response = response.json()
+                    self.payment_id = payment_response.get("paymentId")
+                    response.success()
+                except:
+                    response.failure("Failed to parse payment response")
+            else:
+                response.failure(f"Payment processing failed: {response.status_code}")
+    
+    @task(1)
+    def view_order_history(self):
+        """View order history"""
+        if not self.order_id:
+            return
+        
+        with self.client.get(f"/api/orders/{self.order_id}", catch_response=True) as response:
+            if response.status_code == 200:
+                response.success()
+            elif response.status_code == 404:
+                response.success()  # Order might not exist
+            else:
+                response.failure(f"Failed to get order: {response.status_code}")
+
+
+class BlackFridayLoadUser(HttpUser):
+    """
+    Simulates high-load scenario like Black Friday:
+    - High frequency of product browsing
+    - Rapid order creation
+    - Concurrent payment processing
+    """
+    wait_time = between(0.5, 2)  # Fast shopping during sales
+    
+    def on_start(self):
+        """Quick user setup"""
+        self.user_id = random.randint(1000, 9999)
+        self.product_ids = []
+    
+    @task(10)
+    def rapid_product_browsing(self):
+        """Rapid product browsing"""
+        with self.client.get("/api/products", catch_response=True) as response:
+            if response.status_code == 200:
+                try:
+                    products = response.json()
+                    if "collection" in products:
+                        product_list = products["collection"]
+                        if product_list:
+                            self.product_ids = [p.get("productId") for p in product_list[:5] if p.get("productId")]
+                except:
+                    pass
+                response.success()
+            else:
+                response.failure(f"Status: {response.status_code}")
+    
+    @task(5)
+    def quick_order_placement(self):
+        """Quick order placement"""
+        if not self.product_ids:
+            return
+        
+        product_id = random.choice(self.product_ids)
+        
+        with self.client.get(f"/api/products/{product_id}", catch_response=True) as response:
+            if response.status_code == 200:
+                try:
+                    product = response.json()
+                    price = product.get("priceUnit", 0) or product.get("productPrice", 0)
+                    
+                    from datetime import datetime
+                    order_data = {
+                        "orderDesc": "Black Friday rush order",
+                        "orderFee": float(price),
+                        "orderDate": datetime.now().isoformat()
+                    }
+                    
+                    with self.client.post("/api/orders", json=order_data, catch_response=True) as response2:
+                        if response2.status_code in [200, 201]:
+                            response2.success()
+                        else:
+                            response2.failure(f"Order failed: {response2.status_code}")
+                    
+                    response.success()
+                except:
+                    response.failure("Failed to process order")
+            else:
+                response.failure(f"Product fetch failed: {response.status_code}")
+    
+    @task(3)
+    def concurrent_payment(self):
+        """Concurrent payment processing"""
+        payment_data = {
+            "orderDto": {
+                "orderId": random.randint(1, 1000)
+            },
+            "isPayed": True,
+            "paymentStatus": "COMPLETED"
+        }
+        
+        with self.client.post("/api/payments", json=payment_data, catch_response=True) as response:
+            if response.status_code in [200, 201]:
+                response.success()
+            else:
+                response.failure(f"Payment failed: {response.status_code}")
