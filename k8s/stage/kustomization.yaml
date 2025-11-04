@@ -32,7 +32,19 @@ commonLabels:
   environment: staging
 
 patches:
-  - path: stage-overrides.yaml
-    target:
+  - target:
       kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:configserver:http://cloud-config:9296"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
 
