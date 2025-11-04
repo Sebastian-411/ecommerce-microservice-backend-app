@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -84,11 +83,47 @@ class OrderItemServiceUnitTest {
 	@Test
 	@DisplayName("Test 1: Should find all order items successfully")
 	void testFindAll_ShouldReturnListOfOrderItems() {
-		// Given
-		List<OrderItem> orderItems = Arrays.asList(orderItem, orderItem);
+		// Given - Create two different order items with different IDs
+		OrderItem orderItem2 = OrderItem.builder()
+			.productId(200)
+			.orderId(2)
+			.orderedQuantity(3)
+			.build();
+		
+		List<OrderItem> orderItems = Arrays.asList(orderItem, orderItem2);
 		when(orderItemRepository.findAll()).thenReturn(orderItems);
-		when(restTemplate.getForObject(anyString(), any(Class.class)))
-			.thenReturn(productDto, orderDto);
+		
+		// Mock RestTemplate calls - for each orderItem, we need ProductDto and OrderDto
+		// First orderItem: productId=100, orderId=1
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.PRODUCT_SERVICE_API_URL + "/100", 
+			ProductDto.class))
+			.thenReturn(productDto);
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.ORDER_SERVICE_API_URL + "/1", 
+			OrderDto.class))
+			.thenReturn(orderDto);
+		
+		// Second orderItem: productId=200, orderId=2
+		ProductDto productDto2 = ProductDto.builder()
+			.productId(200)
+			.productTitle("Another Product")
+			.priceUnit(199.99)
+			.build();
+		OrderDto orderDto2 = OrderDto.builder()
+			.orderId(2)
+			.orderDesc("Second Order")
+			.orderFee(299.99)
+			.build();
+		
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.PRODUCT_SERVICE_API_URL + "/200", 
+			ProductDto.class))
+			.thenReturn(productDto2);
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.ORDER_SERVICE_API_URL + "/2", 
+			OrderDto.class))
+			.thenReturn(orderDto2);
 		
 		// When
 		List<OrderItemDto> result = orderItemService.findAll();
@@ -104,8 +139,14 @@ class OrderItemServiceUnitTest {
 	void testFindById_ShouldReturnOrderItemDto() {
 		// Given
 		when(orderItemRepository.findById(orderItemId)).thenReturn(Optional.of(orderItem));
-		when(restTemplate.getForObject(anyString(), any(Class.class)))
-			.thenReturn(productDto, orderDto);
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.PRODUCT_SERVICE_API_URL + "/100", 
+			ProductDto.class))
+			.thenReturn(productDto);
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.ORDER_SERVICE_API_URL + "/1", 
+			OrderDto.class))
+			.thenReturn(orderDto);
 		
 		// When
 		OrderItemDto result = orderItemService.findById(orderItemId);
