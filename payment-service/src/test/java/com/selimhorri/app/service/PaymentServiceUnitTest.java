@@ -73,11 +73,35 @@ class PaymentServiceUnitTest {
 	@Test
 	@DisplayName("Test 1: Should find all payments successfully")
 	void testFindAll_ShouldReturnListOfPayments() {
-		// Given
-		List<Payment> payments = Arrays.asList(payment, payment);
+		// Given - Create two different payments with different IDs
+		Payment payment2 = Payment.builder()
+			.paymentId(2)
+			.orderId(2)
+			.isPayed(true)
+			.paymentStatus(PaymentStatus.COMPLETED)
+			.build();
+		
+		List<Payment> payments = Arrays.asList(payment, payment2);
 		when(paymentRepository.findAll()).thenReturn(payments);
-		when(restTemplate.getForObject(anyString(), any(Class.class)))
+		
+		// Mock RestTemplate calls - for each payment, we need OrderDto
+		// First payment: orderId=1
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.ORDER_SERVICE_API_URL + "/1", 
+			OrderDto.class))
 			.thenReturn(orderDto);
+		
+		// Second payment: orderId=2
+		OrderDto orderDto2 = OrderDto.builder()
+			.orderId(2)
+			.orderDesc("Second Order")
+			.orderFee(299.99)
+			.build();
+		
+		when(restTemplate.getForObject(
+			AppConstant.DiscoveredDomainsApi.ORDER_SERVICE_API_URL + "/2", 
+			OrderDto.class))
+			.thenReturn(orderDto2);
 		
 		// When
 		List<PaymentDto> result = paymentService.findAll();
