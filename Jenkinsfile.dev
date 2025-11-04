@@ -86,13 +86,14 @@ pipeline {
                     
                     for service in user-service product-service order-service favourite-service payment-service shipping-service; do
                         echo ""
-                        echo "Validando ${service}..."
+                        echo "Procesando ${service}..."
                         echo "----------------------------------------"
                         
-                        if ./mvnw jacoco:check -pl ${service}; then
+                        # Ejecutar tests, generar reporte y validar cobertura
+                        if ./mvnw test jacoco:report jacoco:check -pl ${service}; then
                             echo "${service}: Cobertura ≥60%"
                         else
-                            echo "${service}: Cobertura <60%"
+                            echo "${service}: Cobertura <60% o error en la validación"
                             failed_count=$((failed_count + 1))
                         fi
                     done
@@ -100,13 +101,13 @@ pipeline {
                     if [ $failed_count -gt 0 ]; then
                         echo ""
                         echo "=========================================="
-                        echo "ERROR: $failed_count servicio(s) no cumplen con el 60% de cobertura"
+                        echo "ERROR: $failed_count servicio(s) no cumplen con el 60% de cobertura o fallaron los tests"
                         echo "=========================================="
                         exit 1
                     else
                         echo ""
                         echo "=========================================="
-                        echo "Todos los servicios cumplen con el 60% de cobertura"
+                        echo "✅ Todos los servicios cumplen con el 60% de cobertura"
                         echo "=========================================="
                     fi
                 '''
@@ -114,12 +115,6 @@ pipeline {
             post {
                 always {
                     archiveArtifacts artifacts: '**/target/site/jacoco/**/*', allowEmptyArchive: true
-                    publishHTML([
-                        reportDir: '.',
-                        reportFiles: '**/target/site/jacoco/index.html',
-                        reportName: 'JaCoCo Coverage Report',
-                        keepAll: true
-                    ])
                 }
             }
         }
