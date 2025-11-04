@@ -173,11 +173,12 @@ pipeline {
                         
                         # Reemplazo adicional: convertir todas las barras invertidas a barras normales en líneas que contengan minikube
                         # Usar múltiples pasadas para asegurar que todas las barras invertidas se reemplacen
-                        sed -i '/minikube/s/\\\\/\//g' /root/.kube/config || true
-                        sed -i '/minikube/s/\\\\/\//g' /root/.kube/config || true
-                        sed -i '/minikube/s/\\\\/\//g' /root/.kube/config || true
+                        # Usar tr para reemplazar barras invertidas por barras normales
+                        sed -i '/minikube/y/\\/\\//' /root/.kube/config || true
                         # También usar perl si está disponible (más robusto que sed)
-                        perl -i -pe 's|(/root/\.minikube[^\s]*)\\\|$1/|g' /root/.kube/config 2>/dev/null || true
+                        perl -i -pe 's|(/root/\.minikube[^\s]*)\\|$1/|g' /root/.kube/config 2>/dev/null || true
+                        # Pasada adicional usando awk
+                        awk '/minikube/ {gsub(/\\\\/, "/"); print} !/minikube/ {print}' /root/.kube/config > /root/.kube/config.tmp && mv /root/.kube/config.tmp /root/.kube/config || true
                         
                         echo "Verificando corrección de rutas..."
                         echo "Rutas de certificados encontradas:"
