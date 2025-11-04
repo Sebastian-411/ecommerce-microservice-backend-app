@@ -1,0 +1,35 @@
+FROM jenkins/jenkins:lts
+
+USER root
+
+# Instalar dependencias necesarias
+RUN apt-get update && \
+    apt-get install -y \
+    curl \
+    wget \
+    git \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar Docker CLI
+RUN curl -fsSL https://get.docker.com -o get-docker.sh && \
+    sh get-docker.sh && \
+    rm get-docker.sh
+
+# Instalar kubectl
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    chmod +x kubectl && \
+    mv kubectl /usr/local/bin/kubectl
+
+# Instalar kustomize
+RUN curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash && \
+    mv kustomize /usr/local/bin/kustomize
+
+# Verificar instalaciones
+RUN docker --version && \
+    kubectl version --client && \
+    jq --version && \
+    kustomize version
+
+USER jenkins
+
