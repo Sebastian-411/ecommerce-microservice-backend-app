@@ -159,7 +159,6 @@ class CartServiceUnitTest {
 	void testDeleteById_ShouldDeleteCart() {
 		// Given
 		Integer cartId = 1;
-		when(cartRepository.findById(cartId)).thenReturn(Optional.of(cart));
 		
 		// When
 		cartService.deleteById(cartId);

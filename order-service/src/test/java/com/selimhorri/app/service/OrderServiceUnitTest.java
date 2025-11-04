@@ -20,7 +20,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.selimhorri.app.domain.Cart;
 import com.selimhorri.app.domain.Order;
+import com.selimhorri.app.dto.CartDto;
 import com.selimhorri.app.dto.OrderDto;
 import com.selimhorri.app.exception.wrapper.OrderNotFoundException;
 import com.selimhorri.app.repository.OrderRepository;
@@ -38,14 +40,27 @@ class OrderServiceUnitTest {
 	
 	private OrderDto orderDto;
 	private Order order;
+	private Cart cart;
+	private CartDto cartDto;
 	
 	@BeforeEach
 	void setUp() {
+		cart = Cart.builder()
+			.cartId(1)
+			.userId(1)
+			.build();
+		
+		cartDto = CartDto.builder()
+			.cartId(1)
+			.userId(1)
+			.build();
+		
 		orderDto = OrderDto.builder()
 			.orderId(1)
 			.orderDate(LocalDateTime.now())
 			.orderDesc("Test Order")
 			.orderFee(299.99)
+			.cartDto(cartDto)
 			.build();
 		
 		order = Order.builder()
@@ -53,14 +68,28 @@ class OrderServiceUnitTest {
 			.orderDate(LocalDateTime.now())
 			.orderDesc("Test Order")
 			.orderFee(299.99)
+			.cart(cart)
 			.build();
 	}
 	
 	@Test
 	@DisplayName("Test 1: Should find all orders successfully")
 	void testFindAll_ShouldReturnListOfOrders() {
-		// Given
-		List<Order> orders = Arrays.asList(order, order);
+		// Given - Create two different orders with different IDs
+		Cart cart2 = Cart.builder()
+			.cartId(2)
+			.userId(2)
+			.build();
+		
+		Order order2 = Order.builder()
+			.orderId(2)
+			.orderDate(LocalDateTime.now().plusDays(1))
+			.orderDesc("Second Order")
+			.orderFee(399.99)
+			.cart(cart2)
+			.build();
+		
+		List<Order> orders = Arrays.asList(order, order2);
 		when(orderRepository.findAll()).thenReturn(orders);
 		
 		// When
@@ -124,14 +153,18 @@ class OrderServiceUnitTest {
 		// Given
 		OrderDto updatedDto = OrderDto.builder()
 			.orderId(1)
+			.orderDate(LocalDateTime.now())
 			.orderDesc("Updated Order")
 			.orderFee(399.99)
+			.cartDto(cartDto)
 			.build();
 		
 		Order updatedOrder = Order.builder()
 			.orderId(1)
+			.orderDate(LocalDateTime.now())
 			.orderDesc("Updated Order")
 			.orderFee(399.99)
+			.cart(cart)
 			.build();
 		
 		when(orderRepository.save(any(Order.class))).thenReturn(updatedOrder);
@@ -152,8 +185,10 @@ class OrderServiceUnitTest {
 		Integer orderId = 1;
 		OrderDto updatedDto = OrderDto.builder()
 			.orderId(1)
+			.orderDate(LocalDateTime.now())
 			.orderDesc("Updated Order with ID")
 			.orderFee(499.99)
+			.cartDto(cartDto)
 			.build();
 		
 		when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
