@@ -1,812 +1,435 @@
 /*
- * Pipeline para construcción, despliegue y pruebas en entorno STAGING
- * 
- * Este pipeline:
- * 1. Ejecuta pruebas unitarias y valida cobertura de código
- * 2. Construye imágenes Docker para todos los microservicios
- * 3. Hace push de imágenes al registry (adaptable a minikube/local o registry remoto)
- * 4. Despliega en Kubernetes (stage environment)
- * 5. Ejecuta pruebas contra servicios desplegados (smoke, E2E, integración)
- * 
- * Adaptable a diferentes entornos:
- * - Minikube local (usa localhost:5000 como registry)
- * - GKE, EKS, AKS (usa Docker Hub o registry remoto)
- * 
- * Variables de entorno configurables:
- * - KUBERNETES_CONTEXT: Contexto de Kubernetes (minikube, gke, eks, etc.)
- * - DOCKER_REGISTRY: Registry de Docker (localhost:5000 para minikube, o registry remoto)
- * - USE_LOCAL_REGISTRY: true/false - Si usa registry local (minikube)
- * - KUBECTL_NAMESPACE: Namespace de Kubernetes (default: ecommerce-stage)
+ * Pipeline STAGING: build, tests, imágenes Docker, deploy a K8s y pruebas smoke/E2E.
  */
 
 pipeline {
-    agent any
-    
-    environment {
-        // ========================================
-        // CONFIGURACIÓN DEL ENTORNO
-        // ========================================
-        ENVIRONMENT = 'stage'
-        PROJECT_VERSION = "${env.BUILD_NUMBER ?: '0.1.0'}"
-        JAVA_VERSION = '11'
-        MAVEN_OPTS = '-Xmx3072m -XX:MaxPermSize=512m'
-        
-        // Configuración de Kubernetes (adaptable)
-        // Para minikube: KUBERNETES_CONTEXT = 'minikube'
-        // Para GKE: KUBERNETES_CONTEXT = 'gke_<project>_<zone>_<cluster>'
-        KUBERNETES_CONTEXT = "${env.KUBERNETES_CONTEXT ?: 'minikube'}"
-        KUBECTL_NAMESPACE = "${env.KUBECTL_NAMESPACE ?: 'ecommerce-stage'}"
-        
-        // Configuración de Docker Registry (adaptable)
-        // Para minikube local: localhost:5000 (requiere minikube addons enable registry)
-        // Para producción: selimhorri o registry remoto
-        USE_LOCAL_REGISTRY = "${env.USE_LOCAL_REGISTRY ?: 'true'}"
-        DOCKER_REGISTRY = "${env.DOCKER_REGISTRY ?: (USE_LOCAL_REGISTRY == 'true' ? 'localhost:5000' : 'selimhorri')}"
-        
-        // Lista de microservicios
-        INFRASTRUCTURE_SERVICES = 'service-discovery,cloud-config'
-        CORE_SERVICES = 'api-gateway,proxy-client'
-        BUSINESS_SERVICES = 'user-service,product-service,favourite-service,order-service,payment-service,shipping-service'
-        ALL_SERVICES = "${INFRASTRUCTURE_SERVICES},${CORE_SERVICES},${BUSINESS_SERVICES}"
-        
-        // URLs de servicios desplegados (se configurarán después del despliegue)
-        API_GATEWAY_URL = ''
-        SERVICE_DISCOVERY_URL = ''
+  agent any
+
+  environment {
+    ENVIRONMENT         = 'stage'
+    PROJECT_VERSION     = "${env.BUILD_NUMBER ?: '0.1.0'}"
+    JAVA_VERSION        = '11'
+    MAVEN_OPTS          = '-Xmx3072m -XX:MaxPermSize=512m'
+
+    KUBERNETES_CONTEXT  = "${env.KUBERNETES_CONTEXT ?: 'minikube'}"
+    KUBECTL_NAMESPACE   = "${env.KUBECTL_NAMESPACE  ?: 'ecommerce-stage'}"
+
+    USE_LOCAL_REGISTRY  = "${env.USE_LOCAL_REGISTRY ?: 'true'}"
+    DOCKER_REGISTRY     = "${env.DOCKER_REGISTRY ?: 'localhost:5000'}"
+
+    INFRASTRUCTURE_SERVICES = 'service-discovery,cloud-config'
+    CORE_SERVICES           = 'api-gateway,proxy-client'
+    BUSINESS_SERVICES       = 'user-service,product-service,favourite-service,order-service,payment-service,shipping-service'
+    ALL_SERVICES            = "${INFRASTRUCTURE_SERVICES},${CORE_SERVICES},${BUSINESS_SERVICES}"
+  }
+
+  tools {
+    maven 'Maven-3.8'   // ajusta al nombre real de tu instalación
+    jdk   'JDK-11'
+  }
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+    timestamps()
+    timeout(time: 90, unit: 'MINUTES')
+    retry(1)
+  }
+
+  stages {
+
+    stage('Preparación del Entorno') {
+      steps {
+        script {
+          echo '=========================================='
+          echo 'Pipeline STAGING - Build, Deploy & Test'
+          echo '=========================================='
+          echo "Versión del Build: ${PROJECT_VERSION}"
+          echo "Branch: ${env.BRANCH_NAME}"
+          echo "Commit: ${env.GIT_COMMIT}"
+          echo "Entorno: ${ENVIRONMENT}"
+          echo "Kubernetes Context: ${KUBERNETES_CONTEXT}"
+          echo "Docker Registry: ${DOCKER_REGISTRY}"
+          echo "Namespace: ${KUBECTL_NAMESPACE}"
+          echo '=========================================='
+        }
+
+        // Herramientas
+        sh '''#!/usr/bin/env bash
+          set -e
+          echo "Verificando herramientas..."
+          ./mvnw --version || echo "⚠️  mvnw no disponible"
+
+          if command -v docker >/dev/null; then
+            echo "✅ Docker"
+            docker --version
+            docker ps >/dev/null 2>&1 || echo "⚠️  Docker CLI sin acceso al daemon"
+          else
+            echo "❌ Docker no está en el contenedor"; exit 1
+          fi
+
+          if command -v kubectl >/dev/null; then
+            echo "✅ kubectl"
+            kubectl version --client
+          else
+            echo "❌ kubectl no está en el contenedor"; exit 1
+          fi
+
+          command -v jq >/dev/null && jq --version || echo "⚠️  jq no instalado"
+        '''
+
+        // Kubeconfig limpio vía kubectl config set-*
+        sh '''#!/usr/bin/env bash
+          set -e
+          echo "Configurando contexto de Kubernetes: $KUBERNETES_CONTEXT"
+
+          # Si hay minikube en el contenedor, intenta IP; si no, usa valor por defecto
+          MINIKUBE_IP="192.168.49.2"
+          if command -v minikube >/dev/null 2>&1; then
+            set +e
+            MI=$(minikube ip 2>/dev/null)
+            test -n "$MI" && MINIKUBE_IP="$MI"
+            set -e
+          fi
+          echo "Usando API server: https://$MINIKUBE_IP:8443"
+
+          # Rutas de certs esperadas dentro del contenedor
+          CA=/root/.minikube/ca.crt
+          CCRT=/root/.minikube/profiles/minikube/client.crt
+          CKEY=/root/.minikube/profiles/minikube/client.key
+
+          if [ ! -f "$CA" ] || [ ! -f "$CCRT" ] || [ ! -f "$CKEY" ]; then
+            echo "❌ Certificados de minikube no encontrados en /root/.minikube"
+            echo "Contenido disponible:"; ls -la /root/.minikube || true
+            exit 1
+          fi
+
+          # Resetea kubeconfig sin sed/echo raros
+          mkdir -p /root/.kube
+          : > /root/.kube/config
+
+          kubectl config set-cluster minikube \
+            --server="https://$MINIKUBE_IP:8443" \
+            --certificate-authority="$CA" \
+            --embed-certs=false >/dev/null
+
+          kubectl config set-credentials minikube \
+            --client-certificate="$CCRT" \
+            --client-key="$CKEY" \
+            --embed-certs=false >/dev/null
+
+          kubectl config set-context minikube \
+            --cluster=minikube --user=minikube >/dev/null
+
+          kubectl config use-context "$KUBERNETES_CONTEXT" >/dev/null || {
+            echo "⚠️  No se pudo usar el contexto $KUBERNETES_CONTEXT; disponibles:"
+            kubectl config get-contexts || true
+          }
+
+          echo "Verificando cluster-info…"
+          kubectl cluster-info || { echo "❌ Sin acceso al cluster"; exit 1; }
+          echo "✅ Acceso a Kubernetes verificado"
+        '''
+
+        // Registry hint (no toca config)
+        sh '''#!/usr/bin/env bash
+          if [ "$USE_LOCAL_REGISTRY" = "true" ]; then
+            echo "Registry local habilitado: $DOCKER_REGISTRY"
+            command -v minikube >/dev/null && minikube addons list | grep -i registry || echo "⚠️  Verifica addon registry en minikube"
+          else
+            echo "Registry remoto: $DOCKER_REGISTRY"
+          fi
+        '''
+      }
     }
-    
-    tools {
-        maven 'Maven-3.8'
-        jdk 'JDK-11'
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD 2>/dev/null || echo N/A', returnStdout: true).trim()
+        }
+      }
     }
-    
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-        timestamps()
-        timeout(time: 90, unit: 'MINUTES')
-        retry(1)
+
+    stage('Validación y Pruebas') {
+      parallel {
+        stage('Validación de Código') {
+          steps {
+            sh '''#!/usr/bin/env bash
+              ./mvnw validate -q || true
+            '''
+          }
+        }
+        stage('Instalación de Dependencias') {
+          steps {
+            sh '''#!/usr/bin/env bash
+              ./mvnw clean install -N -q
+            '''
+          }
+        }
+      }
     }
-    
-    stages {
-        // ========================================
-        // STAGE 1: PREPARACIÓN DEL ENTORNO
-        // ========================================
-        stage('Preparación del Entorno') {
-            steps {
-                script {
-                    echo "=========================================="
-                    echo "Pipeline STAGING - Build, Deploy & Test"
-                    echo "=========================================="
-                    echo "Versión del Build: ${PROJECT_VERSION}"
-                    echo "Branch: ${env.BRANCH_NAME}"
-                    echo "Commit: ${env.GIT_COMMIT}"
-                    echo "Entorno: ${ENVIRONMENT}"
-                    echo "Kubernetes Context: ${KUBERNETES_CONTEXT}"
-                    echo "Docker Registry: ${DOCKER_REGISTRY}"
-                    echo "Namespace: ${KUBECTL_NAMESPACE}"
-                    echo "=========================================="
-                }
-                
-                // Verificar herramientas necesarias
-                sh '''
-                    echo "Verificando herramientas disponibles..."
-                    
-                    # Verificar Maven
-                    ./mvnw --version || echo "⚠️  Maven wrapper no disponible"
-                    
-                    # Verificar Docker
-                    if command -v docker &> /dev/null; then
-                        echo "✅ Docker está disponible"
-                        docker --version
-                        # Verificar que Docker puede acceder al daemon
-                        docker ps > /dev/null 2>&1 || {
-                            echo "⚠️  Docker CLI está disponible pero no puede conectarse al daemon"
-                            echo "Verifica que el socket de Docker esté montado correctamente"
-                        }
-                    else
-                        echo "❌ Docker no está instalado en el contenedor de Jenkins"
-                        echo "Por favor, reconstruye la imagen de Jenkins usando Dockerfile.jenkins"
-                        exit 1
-                    fi
-                    
-                    # Verificar kubectl
-                    if command -v kubectl &> /dev/null; then
-                        echo "✅ kubectl está disponible"
-                        kubectl version --client
-                    else
-                        echo "❌ kubectl no está instalado en el contenedor de Jenkins"
-                        echo "Por favor, reconstruye la imagen de Jenkins usando Dockerfile.jenkins"
-                        exit 1
-                    fi
-                    
-                    # Verificar jq (opcional pero recomendado)
-                    if command -v jq &> /dev/null; then
-                        echo "✅ jq está disponible"
-                        jq --version
-                    else
-                        echo "⚠️  jq no está instalado (algunas funcionalidades pueden no funcionar)"
-                    fi
-                '''
-                
-                // Configurar contexto de Kubernetes
-                script {
-                    def context = env.KUBERNETES_CONTEXT ?: 'minikube'
-                    sh """
-                        echo "Configurando contexto de Kubernetes: ${context}"
-                    
-                    # Generar kubeconfig limpio desde minikube si está disponible
-                    # Esto evita problemas con rutas de Windows
-                    if command -v minikube &> /dev/null && [ -d /root/.minikube ]; then
-                        echo "Generando kubeconfig limpio desde minikube..."
-                        # Obtener el kubeconfig directamente desde minikube
-                        MINIKUBE_IP=\$(minikube ip 2>/dev/null || echo "192.168.49.2")
-                        if [ -n "\$MINIKUBE_IP" ] && [ "\$MINIKUBE_IP" != "192.168.49.2" ]; then
-                            # Generar kubeconfig manualmente con rutas correctas
-                            mkdir -p /root/.kube
-                            cat > /root/.kube/config << 'KUBECONFIGEOF'
-apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    certificate-authority: /root/.minikube/ca.crt
-    server: https://\$MINIKUBE_IP:8443
-  name: minikube
-contexts:
-- context:
-    cluster: minikube
-    user: minikube
-  name: minikube
-current-context: minikube
-users:
-- name: minikube
-  user:
-    client-certificate: /root/.minikube/profiles/minikube/client.crt
-    client-key: /root/.minikube/profiles/minikube/client.key
-KUBECONFIGEOF
-                            # Reemplazar la variable en el archivo generado
-                            sed -i "s|\\\$MINIKUBE_IP|\$MINIKUBE_IP|g" /root/.kube/config
-                            echo "✅ Kubeconfig generado con rutas correctas"
-                        else
-                            echo "⚠️  No se pudo obtener IP de minikube, usando kubeconfig existente"
-                        fi
-                    fi
-                    
-                    # Si el kubeconfig existe y tiene rutas de Windows, corregirlas de forma segura
-                    if [ -f /root/.kube/config ]; then
-                        echo "Verificando y corrigiendo rutas de Windows en kubeconfig si es necesario..."
-                        
-                        # Crear backup
-                        cp /root/.kube/config /root/.kube/config.backup || true
-                        
-                        # Corrección segura: solo reemplazar rutas completas de Windows, no todas las barras invertidas
-                        sed -i 's|C:\\\\Users\\\\[^\\\\]*\\\\.minikube|/root/.minikube|g' /root/.kube/config || true
-                        sed -i 's|C:/Users/[^/]*/.minikube|/root/.minikube|g' /root/.kube/config || true
-                        sed -i 's|/root/.kube/C:\\\\Users\\\\[^\\\\]*\\\\.minikube|/root/.minikube|g' /root/.kube/config || true
-                        
-                        # Solo reemplazar barras invertidas en rutas específicas de certificados
-                        sed -i 's|client-certificate:[[:space:]]*/root/.minikube[^[:space:]]*\\\\|client-certificate: /root/.minikube/|g' /root/.kube/config || true
-                        sed -i 's|client-key:[[:space:]]*/root/.minikube[^[:space:]]*\\\\|client-key: /root/.minikube/|g' /root/.kube/config || true
-                        sed -i 's|certificate-authority:[[:space:]]*/root/.minikube[^[:space:]]*\\\\|certificate-authority: /root/.minikube/|g' /root/.kube/config || true
-                        
-                        # Reemplazo específico para barras invertidas en rutas de minikube (solo en valores)
-                        sed -i 's|/root/.minikube\\\\profiles\\\\minikube|/root/.minikube/profiles/minikube|g' /root/.kube/config || true
-                        sed -i 's|/root/.minikube\\profiles\\minikube|/root/.minikube/profiles/minikube|g' /root/.kube/config || true
-                        
-                        echo "Verificando rutas de certificados..."
-                        grep -E "(client-certificate|client-key|certificate-authority)" /root/.kube/config | head -3 || echo "No se encontraron rutas de certificados"
-                    fi
-                    
-                    # Cambiar al contexto correcto
-                    kubectl config use-context ${context} 2>/dev/null || {
-                        echo "⚠️  No se pudo cambiar al contexto ${context}"
-                        echo "Listando contextos disponibles:"
-                        kubectl config get-contexts || true
-                        echo "Usando contexto actual o por defecto"
-                    }
-                    
-                    # Verificar acceso al cluster
-                    echo "Verificando acceso al cluster..."
-                    kubectl cluster-info || {
-                        echo "❌ No se puede acceder al cluster de Kubernetes"
-                        echo "Verificando configuración:"
-                        echo "- Kubeconfig: /root/.kube/config"
-                        ls -la /root/.kube/ || true
-                        echo "- Minikube: /root/.minikube"
-                        ls -la /root/.minikube/ 2>/dev/null || echo "⚠️  Directorio .minikube no encontrado"
-                        exit 1
-                    }
-                    echo "✅ Acceso a Kubernetes verificado"
-                    """
-                }
-                
-                // Configurar Docker para minikube si es necesario
-                sh """
-                    if [ "${USE_LOCAL_REGISTRY}" = "true" ]; then
-                        echo "Configurando Docker para usar registry local de minikube..."
-                        # En minikube, el registry está en localhost:5000
-                        # Verificar que el registry está habilitado
-                        minikube addons list | grep registry || echo "⚠️  Registry de minikube no está habilitado"
-                        echo "Registry local: ${DOCKER_REGISTRY}"
-                    else
-                        echo "Usando registry remoto: ${DOCKER_REGISTRY}"
-                    fi
-                """
-            }
-        }
-        
-        // ========================================
-        // STAGE 2: CHECKOUT
-        // ========================================
-        stage('Checkout') {
-            steps {
-                checkout scm
-                script {
-                    env.GIT_COMMIT_SHORT = sh(
-                        script: 'git rev-parse --short HEAD 2>/dev/null || echo "N/A"',
-                        returnStdout: true
-                    ).trim()
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 3: VALIDACIÓN Y PRUEBAS
-        // ========================================
-        stage('Validación y Pruebas') {
-            parallel {
-                stage('Validación de Código') {
-                    steps {
-                        sh '''
-                            echo "Validando estructura del proyecto..."
-                            ./mvnw validate -q || true
-                        '''
-                    }
-                }
-                
-                stage('Instalación de Dependencias') {
-                    steps {
-                        sh '''
-                            echo "Instalando dependencias del proyecto padre..."
-                            ./mvnw clean install -N -q
-                        '''
-                    }
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 4: PRUEBAS UNITARIAS Y COBERTURA
-        // ========================================
-        stage('Pruebas Unitarias y Cobertura') {
-            steps {
-                script {
-                    echo "=========================================="
-                    echo "Ejecutando Pruebas Unitarias y Validando Cobertura (≥50%)"
-                    echo "=========================================="
-                }
-                
-                sh '''
-                    echo ""
-                    echo "Ejecutando tests y validando cobertura para cada servicio..."
-                    echo "=========================================="
-                    
-                    # Validar cobertura para cada servicio
-                    failed_count=0
-                    
-                    for service in user-service product-service order-service favourite-service payment-service shipping-service; do
-                        echo ""
-                        echo "Procesando ${service}..."
-                        echo "----------------------------------------"
-                        
-                        # Ejecutar tests, generar reporte y validar cobertura
-                        if ./mvnw clean test jacoco:report verify -pl ${service}; then
-                            echo "✅ ${service}: Tests pasados y cobertura ≥50%"
-                        else
-                            echo "❌ ${service}: Tests fallaron o cobertura <50%"
-                            failed_count=$((failed_count + 1))
-                        fi
-                    done
-                    
-                    if [ $failed_count -gt 0 ]; then
-                        echo ""
-                        echo "=========================================="
-                        echo "ERROR: $failed_count servicio(s) no cumplen con los requisitos"
-                        echo "=========================================="
-                        exit 1
-                    else
-                        echo ""
-                        echo "=========================================="
-                        echo "✅ Todos los servicios cumplen con los requisitos"
-                        echo "=========================================="
-                    fi
-                '''
-            }
-            post {
-                always {
-                    junit '**/target/surefire-reports/TEST-*.xml'
-                    archiveArtifacts artifacts: '**/target/site/jacoco/**/*', allowEmptyArchive: true
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 5: CONSTRUCCIÓN DE ARTEFACTOS
-        // ========================================
-        stage('Construcción de Artefactos') {
-            steps {
-                script {
-                    echo "=========================================="
-                    echo "Construyendo todos los microservicios"
-                    echo "=========================================="
-                }
-                
-                sh '''
-                    echo "Construyendo aplicación completa..."
-                    ./mvnw clean package -DskipTests
-                    
-                    echo ""
-                    echo "Verificando artefactos generados..."
-                    find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" | sort
-                '''
-                
-                archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: false, excludes: '**/target/*-original.jar'
-            }
-        }
-        
-        // ========================================
-        // STAGE 6: CONSTRUCCIÓN DE IMÁGENES DOCKER
-        // ========================================
-        stage('Construcción de Imágenes Docker') {
-            steps {
-                script {
-                    echo "=========================================="
-                    echo "Construyendo imágenes Docker"
-                    echo "=========================================="
-                    echo "Registry: ${DOCKER_REGISTRY}"
-                }
-                
-                script {
-                    def services = env.ALL_SERVICES.split(',')
-                    for (service in services) {
-                        sh """
-                            echo "Construyendo imagen Docker: ${service}"
-                            docker build -t ${DOCKER_REGISTRY}/${service}-ecommerce-boot:${PROJECT_VERSION} \\
-                                -t ${DOCKER_REGISTRY}/${service}-ecommerce-boot:latest \\
-                                --build-arg PROJECT_VERSION=${PROJECT_VERSION} \\
-                                -f ${service}/Dockerfile . || {
-                                echo "❌ Error construyendo imagen Docker para ${service}"
-                                exit 1
-                            }
-                            echo "✅ Imagen construida: ${DOCKER_REGISTRY}/${service}-ecommerce-boot:${PROJECT_VERSION}"
-                        """
-                    }
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 7: PUSH DE IMÁGENES DOCKER
-        // ========================================
-        stage('Push de Imágenes Docker') {
-            when {
-                anyOf {
-                    branch 'develop'
-                    branch 'stage'
-                    branch 'main'
-                }
-            }
-            steps {
-                script {
-                    if (env.USE_LOCAL_REGISTRY == 'true') {
-                        echo "Usando registry local, saltando push (imágenes ya disponibles localmente)"
-                    } else {
-                        echo "Haciendo push de imágenes al registry remoto..."
-                        
-                        withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                            sh '''
-                                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                            '''
-                            
-                            script {
-                                def services = env.ALL_SERVICES.split(',')
-                                for (service in services) {
-                                    sh """
-                                        echo "Subiendo imagen: ${service}"
-                                        docker push ${DOCKER_REGISTRY}/${service}-ecommerce-boot:${PROJECT_VERSION} || {
-                                            echo "❌ Error subiendo imagen para ${service}"
-                                            exit 1
-                                        }
-                                        docker push ${DOCKER_REGISTRY}/${service}-ecommerce-boot:latest || {
-                                            echo "❌ Error subiendo imagen latest para ${service}"
-                                            exit 1
-                                        }
-                                        echo "✅ Imagen subida: ${service}"
-                                    """
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 8: DESPLIEGUE EN KUBERNETES
-        // ========================================
-        stage('Despliegue en Kubernetes (Staging)') {
-            steps {
-                script {
-                    echo "=========================================="
-                    echo "Desplegando en Kubernetes"
-                    echo "=========================================="
-                    echo "Namespace: ${KUBECTL_NAMESPACE}"
-                    echo "Context: ${KUBERNETES_CONTEXT}"
-                }
-                
-                // Crear namespace si no existe
-                sh """
-                    echo "Creando namespace ${KUBECTL_NAMESPACE} si no existe..."
-                    kubectl create namespace ${KUBECTL_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                """
-                
-                // Actualizar imágenes en los deployments usando kustomize
-                sh """
-                    echo "Actualizando imágenes en deployments..."
-                    echo "Registry: ${DOCKER_REGISTRY}"
-                    echo "Versión: ${PROJECT_VERSION}"
-                    cd k8s/stage
-                    
-                    # Actualizar imágenes usando kustomize
-                    # Usamos el formato: imagen-antigua=imagen-nueva
-                    # kustomize identifica las imágenes por su nombre completo en los deployments
-                    # Nota: Zipkin usa imagen pública (openzipkin/zipkin:latest) y no necesita actualización
-                    kustomize edit set image selimhorri/service-discovery-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/service-discovery-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/cloud-config-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/cloud-config-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/api-gateway-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/api-gateway-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/proxy-client-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/proxy-client-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/user-service-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/user-service-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/product-service-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/product-service-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/favourite-service-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/favourite-service-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/order-service-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/order-service-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/payment-service-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/payment-service-ecommerce-boot:${PROJECT_VERSION}
-                    kustomize edit set image selimhorri/shipping-service-ecommerce-boot:0.1.0=${DOCKER_REGISTRY}/shipping-service-ecommerce-boot:${PROJECT_VERSION}
-                    
-                    # Verificar que las imágenes se actualizaron correctamente
-                    echo "Verificando configuración de kustomize..."
-                    kustomize build . | grep -i "image:" | head -15 || echo "⚠️  No se pudieron verificar las imágenes"
-                    
-                    # Mostrar el kustomization.yaml actualizado para debugging
-                    echo ""
-                    echo "Configuración de kustomize actualizada:"
-                    cat kustomization.yaml | grep -A 2 "images:" || echo "⚠️  Sección de imágenes no encontrada"
-                    
-                    cd ../..
-                """
-                
-                // Aplicar configuración de Kubernetes
-                sh """
-                    echo "Aplicando configuración de Kubernetes..."
-                    kubectl apply -k k8s/stage/ || {
-                        echo "❌ Error aplicando configuración de Kubernetes"
-                        exit 1
-                    }
-                    echo "✅ Configuración aplicada"
-                """
-                
-                // Esperar a que los pods estén listos
-                sh """
-                    echo "Esperando a que los pods estén listos..."
-                    timeout=600
-                    elapsed=0
-                    while [ \$elapsed -lt \$timeout ]; do
-                        ready=\$(kubectl get pods -n ${KUBECTL_NAMESPACE} -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | grep -o "True" | wc -l)
-                        total=\$(kubectl get pods -n ${KUBECTL_NAMESPACE} --no-headers 2>/dev/null | wc -l)
-                        
-                        if [ -z "\$total" ] || [ "\$total" -eq "0" ]; then
-                            echo "Esperando pods..."
-                            sleep 10
-                            elapsed=\$((elapsed + 10))
-                            continue
-                        fi
-                        
-                        echo "Pods listos: \$ready/\$total"
-                        
-                        if [ "\$ready" -eq "\$total" ] && [ "\$total" -gt 0 ]; then
-                            echo "✅ Todos los pods están listos"
-                            break
-                        fi
-                        
-                        sleep 10
-                        elapsed=\$((elapsed + 10))
-                    done
-                    
-                    if [ \$elapsed -ge \$timeout ]; then
-                        echo "❌ Timeout esperando pods"
-                        kubectl get pods -n ${KUBECTL_NAMESPACE}
-                        kubectl describe pods -n ${KUBECTL_NAMESPACE} | grep -A 10 "Events:"
-                        exit 1
-                    fi
-                """
-                
-                // Obtener información de servicios
-                sh """
-                    echo "Obteniendo información de servicios..."
-                    kubectl get services -n ${KUBECTL_NAMESPACE}
-                    kubectl get pods -n ${KUBECTL_NAMESPACE} -o wide
-                """
-            }
-        }
-        
-        // ========================================
-        // STAGE 9: CONFIGURACIÓN DE PORT-FORWARD
-        // ========================================
-        stage('Configuración de Port-Forward') {
-            steps {
-                script {
-                    echo "Configurando port-forward para pruebas..."
-                    sh '''
-                        # Matar procesos anteriores de port-forward si existen
-                        pkill -f "kubectl port-forward" || true
-                        sleep 2
-                        
-                        # Iniciar port-forward para API Gateway
-                        kubectl port-forward -n ${KUBECTL_NAMESPACE} service/api-gateway 8080:8080 > /dev/null 2>&1 &
-                        PORT_FORWARD_PID=$!
-                        echo $PORT_FORWARD_PID > /tmp/port-forward.pid
-                        
-                        # Esperar a que el port-forward esté listo
-                        sleep 5
-                        
-                        # Verificar que el port-forward funciona
-                        for i in {1..10}; do
-                            if curl -f -s http://localhost:8080/actuator/health > /dev/null 2>&1; then
-                                echo "✅ API Gateway está accesible vía port-forward"
-                                break
-                            fi
-                            echo "Esperando API Gateway... (intento $i/10)"
-                            sleep 3
-                        done
-                    '''
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 10: HEALTH CHECKS
-        // ========================================
-        stage('Health Checks - Servicios Desplegados') {
-            steps {
-                script {
-                    echo "Ejecutando health checks en servicios desplegados..."
-                    sh '''
-                        echo "=== Estado de Pods ==="
-                        kubectl get pods -n ${KUBECTL_NAMESPACE} -o wide
-                        
-                        echo ""
-                        echo "=== Estado de Servicios ==="
-                        kubectl get services -n ${KUBECTL_NAMESPACE}
-                        
-                        echo ""
-                        echo "=== Verificando logs de pods críticos ==="
-                        for pod in $(kubectl get pods -n ${KUBECTL_NAMESPACE} -o jsonpath='{.items[*].metadata.name}'); do
-                            echo "--- Pod: $pod ---"
-                            kubectl logs -n ${KUBECTL_NAMESPACE} $pod --tail=5 || true
-                        done
-                    '''
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 11: PRUEBAS SMOKE
-        // ========================================
-        stage('Pruebas Smoke - Servicios Desplegados') {
-            steps {
-                script {
-                    echo "Ejecutando pruebas smoke contra servicios desplegados..."
-                    sh '''
-                        # Esperar un poco más para que los servicios estén completamente listos
-                        sleep 15
-                        
-                        # Pruebas smoke básicas
-                        echo "=== Prueba Smoke 1: Health Check API Gateway ==="
-                        curl -f http://localhost:8080/actuator/health || {
-                            echo "❌ API Gateway no responde"
-                            exit 1
-                        }
-                        
-                        echo "=== Prueba Smoke 2: Service Discovery ==="
-                        kubectl port-forward -n ${KUBECTL_NAMESPACE} service/service-discovery 8761:8761 > /dev/null 2>&1 &
-                        sleep 3
-                        curl -f http://localhost:8761/actuator/health || echo "⚠️  Service Discovery no responde"
-                        pkill -f "kubectl port-forward.*service-discovery" || true
-                        
-                        echo "=== Prueba Smoke 3: API Gateway - Endpoint Users ==="
-                        response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/user-service/api/users || echo "000")
-                        if [ "$response" = "200" ] || [ "$response" = "404" ] || [ "$response" = "401" ]; then
-                            echo "✅ Endpoint /user-service/api/users responde (HTTP $response)"
-                        else
-                            echo "⚠️  Endpoint /user-service/api/users no responde correctamente (HTTP $response)"
-                        fi
-                        
-                        echo "=== Prueba Smoke 4: API Gateway - Endpoint Products ==="
-                        response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/product-service/api/products || echo "000")
-                        if [ "$response" = "200" ] || [ "$response" = "404" ] || [ "$response" = "401" ]; then
-                            echo "✅ Endpoint /product-service/api/products responde (HTTP $response)"
-                        else
-                            echo "⚠️  Endpoint /product-service/api/products no responde correctamente (HTTP $response)"
-                        fi
-                        
-                        echo "✅ Pruebas smoke completadas"
-                    '''
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 12: PRUEBAS E2E
-        // ========================================
-        stage('Pruebas E2E - Servicios Desplegados') {
-            steps {
-                script {
-                    echo "Ejecutando pruebas E2E contra servicios desplegados..."
-                    sh '''
-                        # Configurar variables de entorno para las pruebas
-                        export SPRING_PROFILES_ACTIVE=stage
-                        export API_GATEWAY_URL=http://localhost:8080
-                        
-                        # Ejecutar pruebas E2E específicas
-                        # Las pruebas deben usar el profile 'stage' y conectarse a los servicios desplegados
-                        ./mvnw test -Dtest="*E2ETest" -Dspring.profiles.active=stage -Dapi.gateway.url=http://localhost:8080 || {
-                            echo "⚠️  Algunas pruebas E2E fallaron"
-                            # No fallar el pipeline completamente, pero registrar el error
-                        }
-                    '''
-                }
-            }
-            post {
-                always {
-                    junit '**/target/surefire-reports/TEST-*E2ETest.xml'
-                    archiveArtifacts artifacts: '**/target/surefire-reports/**/*', allowEmptyArchive: true
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 13: PRUEBAS DE INTEGRACIÓN
-        // ========================================
-        stage('Pruebas de Integración - Servicios Desplegados') {
-            steps {
-                script {
-                    echo "Ejecutando pruebas de integración contra servicios desplegados..."
-                    sh '''
-                        export SPRING_PROFILES_ACTIVE=stage
-                        export API_GATEWAY_URL=http://localhost:8080
-                        
-                        # Ejecutar pruebas de integración que validan comunicación entre servicios
-                        ./mvnw test -Dtest="*IntegrationTest" -Dspring.profiles.active=stage -Dapi.gateway.url=http://localhost:8080 || {
-                            echo "⚠️  Algunas pruebas de integración fallaron"
-                        }
-                    '''
-                }
-            }
-            post {
-                always {
-                    junit '**/target/surefire-reports/TEST-*IntegrationTest.xml'
-                    archiveArtifacts artifacts: '**/target/surefire-reports/**/*', allowEmptyArchive: true
-                }
-            }
-        }
-        
-        // ========================================
-        // STAGE 14: VALIDACIÓN FINAL
-        // ========================================
-        stage('Validación Final') {
-            steps {
-                script {
-                    echo "Realizando validación final del despliegue..."
-                    sh '''
-                        echo "=== Estado de Pods ==="
-                        kubectl get pods -n ${KUBECTL_NAMESPACE} -o wide
-                        
-                        echo ""
-                        echo "=== Estado de Servicios ==="
-                        kubectl get services -n ${KUBECTL_NAMESPACE}
-                        
-                        echo ""
-                        echo "=== Verificando endpoints críticos ==="
-                        
-                        # Verificar que los endpoints principales responden
-                        endpoints=(
-                            "/user-service/api/users"
-                            "/product-service/api/products"
-                            "/order-service/api/orders"
-                        )
-                        
-                        for endpoint in "${endpoints[@]}"; do
-                            echo "Probando: $endpoint"
-                            response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080$endpoint || echo "000")
-                            if [ "$response" = "200" ] || [ "$response" = "404" ] || [ "$response" = "401" ]; then
-                                echo "✅ $endpoint responde (HTTP $response)"
-                            else
-                                echo "⚠️  $endpoint no responde correctamente (HTTP $response)"
-                            fi
-                        done
-                        
-                        echo ""
-                        echo "✅ Validación final completada"
-                    '''
-                }
-            }
-        }
-    }
-    
-    post {
+
+    stage('Pruebas Unitarias y Cobertura') {
+      steps {
+        echo 'Ejecutando pruebas unitarias + JaCoCo (≥50%)'
+        sh '''#!/usr/bin/env bash
+          set -e
+          failed=0
+          for service in user-service product-service order-service favourite-service payment-service shipping-service; do
+            echo ">>> $service"
+            if ./mvnw -q -pl "$service" clean test jacoco:report verify; then
+              echo "✅ $service OK"
+            else
+              echo "❌ $service FAIL"; failed=$((failed+1))
+            fi
+          done
+          [ $failed -eq 0 ] || { echo "❌ $failed servicio(s) no cumplen"; exit 1; }
+        '''
+      }
+      post {
         always {
-            script {
-                // Limpiar port-forwards
-                sh '''
-                    echo "Limpiando port-forwards..."
-                    pkill -f "kubectl port-forward" || true
-                    rm -f /tmp/port-forward.pid || true
-                '''
-            }
+          junit '**/target/surefire-reports/TEST-*.xml'
+          archiveArtifacts artifacts: '**/target/site/jacoco/**/*', allowEmptyArchive: true
         }
-        
-        success {
-            echo '✅ Pipeline STAGING ejecutado exitosamente!'
-            script {
-                def summary = """
-                ==========================================
-                Pipeline STAGING - ÉXITO
-                ==========================================
-                Build: ${env.BUILD_NUMBER}
-                Versión: ${PROJECT_VERSION}
-                Branch: ${env.BRANCH_NAME}
-                Commit: ${env.GIT_COMMIT_SHORT}
-                Entorno: ${ENVIRONMENT}
-                
-                Kubernetes:
-                - Context: ${KUBERNETES_CONTEXT}
-                - Namespace: ${KUBECTL_NAMESPACE}
-                - Registry: ${DOCKER_REGISTRY}
-                
-                Pruebas ejecutadas:
-                - Unitarias e Integración (locales)
-                - Smoke Tests (servicios desplegados)
-                - E2E Tests (servicios desplegados)
-                - Integración Tests (servicios desplegados)
-                
-                Servicios desplegados en: ${KUBECTL_NAMESPACE}
-                ==========================================
-                """
-                echo summary
-            }
-        }
-        
-        failure {
-            echo '❌ Pipeline STAGING falló!'
-            script {
-                sh '''
-                    echo "Obteniendo información de diagnóstico..."
-                    echo "=== Estado de Pods ==="
-                    kubectl get pods -n ${KUBECTL_NAMESPACE} -o wide || true
-                    
-                    echo ""
-                    echo "=== Pods en estado Error/CrashLoopBackOff ==="
-                    kubectl get pods -n ${KUBECTL_NAMESPACE} -o json | jq -r '.items[] | select(.status.phase != "Running") | (.metadata.name + ": " + .status.phase)' || true
-                    
-                    echo ""
-                    echo "=== Logs de pods fallidos ==="
-                    for pod in $(kubectl get pods -n ${KUBECTL_NAMESPACE} -o jsonpath='{.items[?(@.status.phase!="Running")].metadata.name}'); do
-                        echo "--- Logs de pod fallido: $pod ---"
-                        kubectl logs -n ${KUBECTL_NAMESPACE} $pod --tail=50 || true
-                    done
-                '''
-            }
-        }
-        
-        unstable {
-            echo '⚠️  Pipeline STAGING terminó con advertencias'
-        }
+      }
     }
+
+    stage('Construcción de Artefactos') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set -e
+          ./mvnw clean package -DskipTests
+          find . -name "*.jar" -path "*/target/*" -not -name "*-original.jar" | sort
+        '''
+        archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: false, excludes: '**/target/*-original.jar'
+      }
+    }
+
+    stage('Construcción de Imágenes Docker') {
+      steps {
+        script {
+          for (svc in env.ALL_SERVICES.split(',')) {
+            withEnv(["SVC=${svc}"]) {
+              sh '''#!/usr/bin/env bash
+                set -e
+                echo "Docker build: $SVC"
+                docker build \
+                  -t "$DOCKER_REGISTRY/$SVC-ecommerce-boot:$PROJECT_VERSION" \
+                  -t "$DOCKER_REGISTRY/$SVC-ecommerce-boot:latest" \
+                  --build-arg PROJECT_VERSION="$PROJECT_VERSION" \
+                  -f "$SVC/Dockerfile" .
+              '''
+            }
+          }
+        }
+      }
+    }
+
+    stage('Push de Imágenes Docker') {
+      when { anyOf { branch 'develop'; branch 'stage'; branch 'main' } }
+      steps {
+        script {
+          if (env.USE_LOCAL_REGISTRY == 'true') {
+            echo 'Registry local: se omite push (imágenes locales)'
+          } else {
+            withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+              sh '''#!/usr/bin/env bash
+                set -e
+                echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+              '''
+              for (svc in env.ALL_SERVICES.split(',')) {
+                withEnv(["SVC=${svc}"]) {
+                  sh '''#!/usr/bin/env bash
+                    set -e
+                    docker push "$DOCKER_REGISTRY/$SVC-ecommerce-boot:$PROJECT_VERSION"
+                    docker push "$DOCKER_REGISTRY/$SVC-ecommerce-boot:latest"
+                  '''
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    stage('Despliegue en Kubernetes (Staging)') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set -e
+          echo "Creando namespace $KUBECTL_NAMESPACE si no existe…"
+          kubectl create namespace "$KUBECTL_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+        '''
+
+        // Apply manifiestos
+        sh '''#!/usr/bin/env bash
+          set -e
+          echo "Aplicando k8s/stage …"
+          if command -v kustomize >/dev/null 2>&1; then
+            echo "Usando kustomize build"
+            kubectl apply -k k8s/stage/
+          else
+            echo "⚠️  kustomize CLI no está; intentando 'kubectl apply -k'"
+            kubectl apply -k k8s/stage/
+          fi
+        '''
+
+        // Espera pods listos
+        sh '''#!/usr/bin/env bash
+          set -e
+          echo "Esperando pods listos en $KUBECTL_NAMESPACE…"
+          timeout=600; elapsed=0
+          while [ $elapsed -lt $timeout ]; do
+            total=$(kubectl get pods -n "$KUBECTL_NAMESPACE" --no-headers 2>/dev/null | wc -l || echo 0)
+            ready=$(kubectl get pods -n "$KUBECTL_NAMESPACE" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | grep -o True | wc -l || echo 0)
+            [ "$total" -gt 0 ] && [ "$ready" -eq "$total" ] && { echo "✅ Pods listos ($ready/$total)"; break; }
+            echo "Aún esperando… ($ready/$total)"; sleep 10; elapsed=$((elapsed+10))
+          done
+          [ $elapsed -lt $timeout ] || { echo "❌ Timeout esperando pods"; kubectl get pods -n "$KUBECTL_NAMESPACE"; exit 1; }
+          kubectl get services -n "$KUBECTL_NAMESPACE"
+          kubectl get pods -n "$KUBECTL_NAMESPACE" -o wide
+        '''
+      }
+    }
+
+    stage('Configuración de Port-Forward') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set -e
+          pkill -f "kubectl port-forward" || true
+          sleep 2
+          kubectl port-forward -n "$KUBECTL_NAMESPACE" service/api-gateway 8080:8080 >/dev/null 2>&1 &
+          echo $! >/tmp/port-forward.pid
+          sleep 5
+          for i in {1..10}; do
+            if curl -fs http://localhost:8080/actuator/health >/dev/null; then
+              echo "✅ API Gateway accesible"
+              break
+            fi
+            echo "Esperando API Gateway… ($i/10)"; sleep 3
+          done
+        '''
+      }
+    }
+
+    stage('Health Checks - Servicios Desplegados') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set -e
+          kubectl get pods -n "$KUBECTL_NAMESPACE" -o wide
+          kubectl get services -n "$KUBECTL_NAMESPACE"
+          for pod in $(kubectl get pods -n "$KUBECTL_NAMESPACE" -o jsonpath='{.items[*].metadata.name}'); do
+            echo "--- $pod ---"
+            kubectl logs -n "$KUBECTL_NAMESPACE" "$pod" --tail=5 || true
+          done
+        '''
+      }
+    }
+
+    stage('Pruebas Smoke') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set -e
+          sleep 10
+          curl -f http://localhost:8080/actuator/health
+
+          kubectl port-forward -n "$KUBECTL_NAMESPACE" service/service-discovery 8761:8761 >/dev/null 2>&1 &
+          sleep 3
+          curl -fs http://localhost:8761/actuator/health || echo "⚠️  Eureka no responde"
+          pkill -f "kubectl port-forward.*service-discovery" || true
+
+          for ep in \
+            "/user-service/api/users" \
+            "/product-service/api/products"
+          do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080$ep" || echo 000)
+            case "$code" in 200|401|404) echo "✅ $ep ($code)";; *) echo "⚠️  $ep ($code)";; esac
+          done
+        '''
+      }
+    }
+
+    stage('Pruebas E2E') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set +e
+          SPRING_PROFILES_ACTIVE=stage API_GATEWAY_URL=http://localhost:8080 \
+            ./mvnw test -Dtest="*E2ETest" -Dspring.profiles.active=stage -Dapi.gateway.url=http://localhost:8080
+          exit 0
+        '''
+      }
+      post {
+        always {
+          junit '**/target/surefire-reports/TEST-*E2ETest.xml'
+          archiveArtifacts artifacts: '**/target/surefire-reports/**/*', allowEmptyArchive: true
+        }
+      }
+    }
+
+    stage('Pruebas de Integración') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set +e
+          SPRING_PROFILES_ACTIVE=stage API_GATEWAY_URL=http://localhost:8080 \
+            ./mvnw test -Dtest="*IntegrationTest" -Dspring.profiles.active=stage -Dapi.gateway.url=http://localhost:8080
+          exit 0
+        '''
+      }
+      post {
+        always {
+          junit '**/target/surefire-reports/TEST-*IntegrationTest.xml'
+          archiveArtifacts artifacts: '**/target/surefire-reports/**/*', allowEmptyArchive: true
+        }
+      }
+    }
+
+    stage('Validación Final') {
+      steps {
+        sh '''#!/usr/bin/env bash
+          set -e
+          kubectl get pods -n "$KUBECTL_NAMESPACE" -o wide
+          kubectl get services -n "$KUBECTL_NAMESPACE"
+          for ep in "/user-service/api/users" "/product-service/api/products" "/order-service/api/orders"; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080$ep" || echo 000)
+            case "$code" in 200|401|404) echo "✅ $ep ($code)";; *) echo "⚠️  $ep ($code)";; esac
+          done
+          echo "✅ Validación final OK"
+        '''
+      }
+    }
+  }
+
+  post {
+    always {
+      sh '''#!/usr/bin/env bash
+        echo "Limpiando port-forwards…"
+        pkill -f "kubectl port-forward" || true
+        rm -f /tmp/port-forward.pid || true
+      '''
+    }
+    success {
+      script {
+        echo """
+==========================================
+Pipeline STAGING - ÉXITO
+Build: ${env.BUILD_NUMBER}
+Versión: ${PROJECT_VERSION}
+Branch: ${env.BRANCH_NAME}
+Commit: ${env.GIT_COMMIT_SHORT}
+Entorno: ${ENVIRONMENT}
+Kubernetes: context=${KUBERNETES_CONTEXT} ns=${KUBECTL_NAMESPACE} registry=${DOCKER_REGISTRY}
+==========================================
+"""
+      }
+    }
+    failure {
+      echo '❌ Pipeline STAGING falló'
+      sh '''#!/usr/bin/env bash
+        echo "Diagnóstico rápido…"
+        kubectl get pods -n "$KUBECTL_NAMESPACE" -o wide || true
+        kubectl get events -n "$KUBECTL_NAMESPACE" --sort-by=.lastTimestamp | tail -n 30 || true
+      '''
+    }
+    unstable { echo '⚠️  Pipeline STAGING con advertencias' }
+  }
 }
