@@ -171,20 +171,13 @@ pipeline {
                         sed -i 's|client-key: /root/.minikube[^[:space:]]*\\\\|client-key: /root/.minikube/|g' /root/.kube/config || true
                         sed -i 's|certificate-authority: /root/.minikube[^[:space:]]*\\\\|certificate-authority: /root/.minikube/|g' /root/.kube/config || true
                         
-                        # Usar Python para reemplazar todas las barras invertidas restantes en rutas
-                        python3 -c "
-import re
-with open('/root/.kube/config', 'r') as f:
-    content = f.read()
-# Reemplazar barras invertidas en rutas de minikube
-content = re.sub(r'(/root/\.minikube[^\s]*)\\\\', r'\1/', content)
-content = re.sub(r'(/root/\.minikube[^\s]*)\\\\', r'\1/', content)  # Segunda pasada
-with open('/root/.kube/config', 'w') as f:
-    f.write(content)
-" 2>/dev/null || echo "⚠️  Python no disponible, usando sed alternativo"
-                        
-                        # Fallback: usar tr para reemplazar barras invertidas por barras normales en líneas específicas
+                        # Reemplazo adicional: convertir todas las barras invertidas a barras normales en líneas que contengan minikube
+                        # Usar múltiples pasadas para asegurar que todas las barras invertidas se reemplacen
                         sed -i '/minikube/s/\\\\/\//g' /root/.kube/config || true
+                        sed -i '/minikube/s/\\\\/\//g' /root/.kube/config || true
+                        sed -i '/minikube/s/\\\\/\//g' /root/.kube/config || true
+                        # También usar perl si está disponible (más robusto que sed)
+                        perl -i -pe 's|(/root/\.minikube[^\s]*)\\\|$1/|g' /root/.kube/config 2>/dev/null || true
                         
                         echo "Verificando corrección de rutas..."
                         echo "Rutas de certificados encontradas:"
