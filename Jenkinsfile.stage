@@ -129,24 +129,24 @@ pipeline {
                 
                 // Configurar contexto de Kubernetes
                 sh """
-                    echo "Configurando contexto de Kubernetes: ${KUBERNETES_CONTEXT}"
+                    echo "Configurando contexto de Kubernetes: \${KUBERNETES_CONTEXT}"
                     
                     # Generar kubeconfig limpio desde minikube si está disponible
                     # Esto evita problemas con rutas de Windows
                     if command -v minikube &> /dev/null && [ -d /root/.minikube ]; then
                         echo "Generando kubeconfig limpio desde minikube..."
                         # Obtener el kubeconfig directamente desde minikube
-                        MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "192.168.49.2")
-                        if [ -n "$MINIKUBE_IP" ] && [ "$MINIKUBE_IP" != "192.168.49.2" ]; then
+                        MINIKUBE_IP=\$(minikube ip 2>/dev/null || echo "192.168.49.2")
+                        if [ -n "\$MINIKUBE_IP" ] && [ "\$MINIKUBE_IP" != "192.168.49.2" ]; then
                             # Generar kubeconfig manualmente con rutas correctas
                             mkdir -p /root/.kube
-                            cat > /root/.kube/config << EOF
+                            cat > /root/.kube/config << 'KUBECONFIGEOF'
 apiVersion: v1
 kind: Config
 clusters:
 - cluster:
     certificate-authority: /root/.minikube/ca.crt
-    server: https://${MINIKUBE_IP}:8443
+    server: https://\$MINIKUBE_IP:8443
   name: minikube
 contexts:
 - context:
@@ -159,7 +159,9 @@ users:
   user:
     client-certificate: /root/.minikube/profiles/minikube/client.crt
     client-key: /root/.minikube/profiles/minikube/client.key
-EOF
+KUBECONFIGEOF
+                            # Reemplazar la variable en el archivo generado
+                            sed -i "s|\\\$MINIKUBE_IP|\$MINIKUBE_IP|g" /root/.kube/config
                             echo "✅ Kubeconfig generado con rutas correctas"
                         else
                             echo "⚠️  No se pudo obtener IP de minikube, usando kubeconfig existente"
@@ -192,8 +194,8 @@ EOF
                     fi
                     
                     # Cambiar al contexto correcto
-                    kubectl config use-context ${KUBERNETES_CONTEXT} 2>/dev/null || {
-                        echo "⚠️  No se pudo cambiar al contexto ${KUBERNETES_CONTEXT}"
+                    kubectl config use-context \${KUBERNETES_CONTEXT} 2>/dev/null || {
+                        echo "⚠️  No se pudo cambiar al contexto \${KUBERNETES_CONTEXT}"
                         echo "Listando contextos disponibles:"
                         kubectl config get-contexts || true
                         echo "Usando contexto actual o por defecto"
