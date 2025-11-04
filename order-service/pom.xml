@@ -136,7 +136,7 @@
 						<configuration>
 							<rules>
 								<rule>
-									<element>PACKAGE</element>
+									<element>BUNDLE</element>
 									<limits>
 										<limit>
 											<counter>LINE</counter>
@@ -149,6 +149,15 @@
 											<minimum>0.50</minimum>
 										</limit>
 									</limits>
+									<excludes>
+										<exclude>com.selimhorri.app.config.**</exclude>
+										<exclude>com.selimhorri.app.constant.**</exclude>
+										<exclude>com.selimhorri.app.exception.**</exclude>
+										<exclude>com.selimhorri.app.dto.**</exclude>
+										<exclude>com.selimhorri.app.domain.**</exclude>
+										<exclude>com.selimhorri.app.helper.**</exclude>
+										<exclude>com.selimhorri.app.resource.**</exclude>
+									</excludes>
 								</rule>
 							</rules>
 						</configuration>
