@@ -146,10 +146,49 @@ pipeline {
                     # Si el kubeconfig tiene rutas de Windows, intentar corregirlas
                     if [ -f /root/.kube/config ]; then
                         echo "Corrigiendo rutas de Windows en kubeconfig si es necesario..."
+                        
+                        # Crear backup del kubeconfig
+                        cp /root/.kube/config /root/.kube/config.backup || true
+                        
                         # Reemplazar rutas de Windows por rutas de Linux dentro del contenedor
+                        # Primero reemplazar rutas completas de Windows con barras invertidas
                         sed -i 's|C:\\\\Users\\\\[^\\\\]*\\\\.minikube|/root/.minikube|g' /root/.kube/config || true
+                        # Reemplazar rutas completas de Windows con barras normales
                         sed -i 's|C:/Users/[^/]*/.minikube|/root/.minikube|g' /root/.kube/config || true
+                        # Reemplazar rutas que empiezan con /root/.kube/C:...
                         sed -i 's|/root/.kube/C:\\\\Users\\\\[^\\\\]*\\\\.minikube|/root/.minikube|g' /root/.kube/config || true
+                        
+                        # Convertir TODAS las barras invertidas a barras normales en rutas de minikube
+                        # Esto maneja casos como /root/.minikube\profiles\minikube\client.crt
+                        sed -i 's|/root/\\.minikube|/root/.minikube|g' /root/.kube/config || true
+                        sed -i 's|/root/.minikube\\\\|/root/.minikube/|g' /root/.kube/config || true
+                        sed -i 's|/root/.minikube\\|/root/.minikube/|g' /root/.kube/config || true
+                        # Reemplazar cualquier barra invertida restante en rutas que contengan .minikube
+                        sed -i 's|\\(/root/.minikube\\)\\\\|\1/|g' /root/.kube/config || true
+                        sed -i 's|\\(/root/.minikube[^[:space:]]*\\)\\\\|\1/|g' /root/.kube/config || true
+                        # Reemplazo global de barras invertidas en rutas de certificados
+                        sed -i 's|client-cert: /root/.minikube[^[:space:]]*\\\\|client-cert: /root/.minikube/|g' /root/.kube/config || true
+                        sed -i 's|client-key: /root/.minikube[^[:space:]]*\\\\|client-key: /root/.minikube/|g' /root/.kube/config || true
+                        sed -i 's|certificate-authority: /root/.minikube[^[:space:]]*\\\\|certificate-authority: /root/.minikube/|g' /root/.kube/config || true
+                        
+                        # Usar Python para reemplazar todas las barras invertidas restantes en rutas
+                        python3 -c "
+import re
+with open('/root/.kube/config', 'r') as f:
+    content = f.read()
+# Reemplazar barras invertidas en rutas de minikube
+content = re.sub(r'(/root/\.minikube[^\s]*)\\\\', r'\1/', content)
+content = re.sub(r'(/root/\.minikube[^\s]*)\\\\', r'\1/', content)  # Segunda pasada
+with open('/root/.kube/config', 'w') as f:
+    f.write(content)
+" 2>/dev/null || echo "⚠️  Python no disponible, usando sed alternativo"
+                        
+                        # Fallback: usar tr para reemplazar barras invertidas por barras normales en líneas específicas
+                        sed -i '/minikube/s/\\\\/\//g' /root/.kube/config || true
+                        
+                        echo "Verificando corrección de rutas..."
+                        echo "Rutas de certificados encontradas:"
+                        grep -E "(client-cert|client-key|certificate-authority)" /root/.kube/config | head -3 || echo "No se encontraron rutas de certificados"
                     fi
                     
                     # Cambiar al contexto correcto
