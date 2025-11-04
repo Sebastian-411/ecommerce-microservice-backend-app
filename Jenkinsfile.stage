@@ -130,14 +130,45 @@ pipeline {
                 // Configurar contexto de Kubernetes
                 sh """
                     echo "Configurando contexto de Kubernetes: ${KUBERNETES_CONTEXT}"
-                    kubectl config use-context ${KUBERNETES_CONTEXT} || {
-                        echo "⚠️  No se pudo cambiar al contexto ${KUBERNETES_CONTEXT}, usando contexto actual"
+                    
+                    # Verificar que el kubeconfig existe
+                    if [ ! -f /root/.kube/config ]; then
+                        echo "⚠️  Archivo kubeconfig no encontrado en /root/.kube/config"
+                        echo "Verificando configuración de Kubernetes..."
+                        
+                        # Intentar obtener el kubeconfig desde minikube si está disponible
+                        if command -v minikube &> /dev/null; then
+                            echo "Obteniendo kubeconfig desde minikube..."
+                            minikube kubectl -- config view --flatten > /root/.kube/config || echo "⚠️  No se pudo obtener kubeconfig desde minikube"
+                        fi
+                    fi
+                    
+                    # Si el kubeconfig tiene rutas de Windows, intentar corregirlas
+                    if [ -f /root/.kube/config ]; then
+                        echo "Corrigiendo rutas de Windows en kubeconfig si es necesario..."
+                        # Reemplazar rutas de Windows por rutas de Linux dentro del contenedor
+                        sed -i 's|C:\\\\Users\\\\[^\\\\]*\\\\.minikube|/root/.minikube|g' /root/.kube/config || true
+                        sed -i 's|C:/Users/[^/]*/.minikube|/root/.minikube|g' /root/.kube/config || true
+                        sed -i 's|/root/.kube/C:\\\\Users\\\\[^\\\\]*\\\\.minikube|/root/.minikube|g' /root/.kube/config || true
+                    fi
+                    
+                    # Cambiar al contexto correcto
+                    kubectl config use-context ${KUBERNETES_CONTEXT} 2>/dev/null || {
+                        echo "⚠️  No se pudo cambiar al contexto ${KUBERNETES_CONTEXT}"
+                        echo "Listando contextos disponibles:"
+                        kubectl config get-contexts || true
+                        echo "Usando contexto actual o por defecto"
                     }
                     
                     # Verificar acceso al cluster
                     echo "Verificando acceso al cluster..."
                     kubectl cluster-info || {
                         echo "❌ No se puede acceder al cluster de Kubernetes"
+                        echo "Verificando configuración:"
+                        echo "- Kubeconfig: /root/.kube/config"
+                        ls -la /root/.kube/ || true
+                        echo "- Minikube: /root/.minikube"
+                        ls -la /root/.minikube/ 2>/dev/null || echo "⚠️  Directorio .minikube no encontrado"
                         exit 1
                     }
                     echo "✅ Acceso a Kubernetes verificado"

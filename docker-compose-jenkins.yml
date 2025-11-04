@@ -21,7 +21,21 @@ services:
       # Si no funciona, intenta con: /var/run/docker.sock:/var/run/docker.sock
       - /var/run/docker.sock:/var/run/docker.sock
       # Montar kubeconfig para acceso a Kubernetes
-      - ~/.kube:/root/.kube:ro
+      # IMPORTANTE: En Windows, ajusta la ruta según tu usuario
+      # Opción 1: Usar variable de entorno (Linux/Mac)
+      # - ${HOME}/.kube:/root/.kube:rw
+      # Opción 2: Usar ruta absoluta de Windows (ajusta el usuario)
+      # - C:/Users/TuUsuario/.kube:/root/.kube:rw
+      # Opción 3: Usar ruta actual (descomenta y ajusta):
+      - C:/Users/Juan Diaz/.kube:/root/.kube:rw
+      # Montar el perfil de minikube completo (necesario para los certificados)
+      # IMPORTANTE: En Windows, ajusta la ruta según tu usuario
+      # Opción 1: Usar variable de entorno (Linux/Mac)
+      # - ${HOME}/.minikube:/root/.minikube:ro
+      # Opción 2: Usar ruta absoluta de Windows (ajusta el usuario)
+      # - C:/Users/TuUsuario/.minikube:/root/.minikube:ro
+      # Opción 3: Usar ruta actual (descomenta y ajusta):
+      - C:/Users/Juan Diaz/.minikube:/root/.minikube:ro
     environment:
       - JAVA_OPTS=-Xmx2048m -Xms512m
       - JENKINS_OPTS=--httpPort=8080
