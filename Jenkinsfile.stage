@@ -176,57 +176,40 @@ pipeline {
       steps {
         script {
           if (env.USE_LOCAL_REGISTRY == 'true') {
-            echo 'Registry local: cargando imágenes directamente en Minikube…'
+            echo 'Registry local: imágenes construidas. Intentando push al registry local de Minikube…'
             sh '''#!/usr/bin/env bash
               set -e
-              # Opción 1: Intentar usar minikube image load (más confiable)
-              if command -v minikube >/dev/null 2>&1; then
-                echo "Usando minikube image load..."
-                for svc in $(echo "${ALL_SERVICES}" | tr ',' ' '); do
-                  echo "Cargando imagen en Minikube: $svc"
-                  # Guardar imagen en tar y cargar en Minikube
-                  docker save "$DOCKER_REGISTRY/$svc-ecommerce-boot:$PROJECT_VERSION" | \
-                    minikube image load - 2>&1 || echo "⚠️  Falló cargar $svc:$PROJECT_VERSION"
-                  docker save "$DOCKER_REGISTRY/$svc-ecommerce-boot:latest" | \
-                    minikube image load - 2>&1 || echo "⚠️  Falló cargar $svc:latest"
+              echo "Verificando registry local en ${DOCKER_REGISTRY}..."
+              # Intentar push al registry local de Minikube
+              # Nota: El registry de Minikube con docker driver usa puerto 17758, pero 
+              # puede estar mapeado a localhost:5000 desde el host
+              for svc in $(echo "${ALL_SERVICES}" | tr ',' ' '); do
+                echo "Push imagen: $svc"
+                # Intentar push con retry - si falla, las imágenes seguirán disponibles localmente
+                for attempt in 1 2 3; do
+                  if docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:$PROJECT_VERSION" 2>&1; then
+                    echo "✅ Push exitoso: $svc:$PROJECT_VERSION"
+                    break
+                  else
+                    echo "⚠️  Intento $attempt falló para $svc:$PROJECT_VERSION (puede ser normal si el registry no está accesible)"
+                    [ $attempt -eq 3 ] && echo "ℹ️  Push falló después de 3 intentos - las imágenes están disponibles localmente"
+                    sleep 2
+                  fi
                 done
-                echo "✅ Imágenes cargadas en Minikube"
-              else
-                # Opción 2: Fallback - intentar push al registry local
-                echo "minikube no disponible, intentando push al registry local..."
-                echo "Verificando registry local en ${DOCKER_REGISTRY}..."
-                curl -s --connect-timeout 5 http://${DOCKER_REGISTRY}/v2/_catalog >/dev/null || {
-                  echo "⚠️  Registry local no responde, pero continuamos..."
-                }
                 
-                # Push de imágenes al registry local de Minikube
-                for svc in $(echo "${ALL_SERVICES}" | tr ',' ' '); do
-                  echo "Push imagen: $svc"
-                  # Intentar push con retry
-                  for attempt in 1 2 3; do
-                    if docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:$PROJECT_VERSION" 2>&1; then
-                      echo "✅ Push exitoso: $svc:$PROJECT_VERSION"
-                      break
-                    else
-                      echo "⚠️  Intento $attempt falló para $svc:$PROJECT_VERSION"
-                      [ $attempt -eq 3 ] && echo "❌ Falló después de 3 intentos para $svc:$PROJECT_VERSION"
-                      sleep 2
-                    fi
-                  done
-                  
-                  for attempt in 1 2 3; do
-                    if docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:latest" 2>&1; then
-                      echo "✅ Push exitoso: $svc:latest"
-                      break
-                    else
-                      echo "⚠️  Intento $attempt falló para $svc:latest"
-                      [ $attempt -eq 3 ] && echo "❌ Falló después de 3 intentos para $svc:latest"
-                      sleep 2
-                    fi
-                  done
+                for attempt in 1 2 3; do
+                  if docker push "$DOCKER_REGISTRY/$svc-ecommerce-boot:latest" 2>&1; then
+                    echo "✅ Push exitoso: $svc:latest"
+                    break
+                  else
+                    echo "⚠️  Intento $attempt falló para $svc:latest (puede ser normal si el registry no está accesible)"
+                    [ $attempt -eq 3 ] && echo "ℹ️  Push falló después de 3 intentos - las imágenes están disponibles localmente"
+                    sleep 2
+                  fi
                 done
-                echo "✅ Proceso de push completado"
-              fi
+              done
+              echo "ℹ️  Si el push falló, carga las imágenes manualmente en Minikube con:"
+              echo "   docker save ${DOCKER_REGISTRY}/SERVICE-ecommerce-boot:latest | minikube image load -"
             '''
           } else {
             // Solo hacer push si está en una rama específica

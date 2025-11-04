@@ -31,7 +31,8 @@ resources:
 commonLabels:
   environment: staging
 
-# Reemplazar imágenes con las del registry local
+# Reemplazar imágenes - usar solo el nombre de la imagen (sin registry)
+# Cuando se usa 'imagePullPolicy: Never', Kubernetes usa imágenes locales cargadas con 'minikube image load'
 images:
   - name: selimhorri/service-discovery-ecommerce-boot
     newName: localhost:5000/service-discovery-ecommerce-boot
