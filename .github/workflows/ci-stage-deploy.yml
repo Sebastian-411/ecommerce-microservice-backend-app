@@ -228,6 +228,21 @@ jobs:
         with:
           kustomize-version: '5.0.0'
       
+      - name: Install kubelogin
+        run: |
+          echo "Instalando kubelogin..."
+          KUBELOGIN_VERSION="v0.0.28"
+          
+          # Descargar y extraer kubelogin
+          curl -LO "https://github.com/Azure/kubelogin/releases/download/${KUBELOGIN_VERSION}/kubelogin-linux-amd64.zip"
+          unzip -q kubelogin-linux-amd64.zip
+          chmod +x bin/linux_amd64/kubelogin
+          sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
+          
+          # Verificar instalación
+          kubelogin --version
+          echo "✅ kubelogin instalado correctamente"
+      
       - name: Set AKS context (native)
         uses: azure/aks-set-context@v4
         with:
