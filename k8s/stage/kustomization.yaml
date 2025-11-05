@@ -120,9 +120,39 @@ patches:
             value: "optional:configserver:http://cloud-config:9296"
           - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
             value: "http://service-discovery:8761/eureka"
+          - name: MANAGEMENT_HEALTH_EUREKA_ENABLED
+            value: "false"
       - op: replace
         path: /spec/template/spec/containers/0/imagePullPolicy
         value: IfNotPresent
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe
+        value:
+          httpGet:
+            path: /actuator/health
+            port: 8700
+          initialDelaySeconds: 60
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 24
+      - op: replace
+        path: /spec/template/spec/containers/0/livenessProbe
+        value:
+          httpGet:
+            path: /actuator/health
+            port: 8700
+          initialDelaySeconds: 90
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 6
+      - op: add
+        path: /spec/template/spec/containers/0/startupProbe
+        value:
+          httpGet:
+            path: /actuator/health
+            port: 8700
+          periodSeconds: 5
+          failureThreshold: 36
   
   - target:
       kind: Deployment
