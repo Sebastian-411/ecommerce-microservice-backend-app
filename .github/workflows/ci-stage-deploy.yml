@@ -214,7 +214,7 @@ jobs:
           fi
       
       - name: Azure Login
-        uses: azure/login@v1
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       
@@ -228,13 +228,12 @@ jobs:
         with:
           kustomize-version: '5.0.0'
       
-      - name: Configure Kubernetes Context - Azure AKS
-        uses: azure/k8s-set-context@v3
+      - name: Set AKS context (native)
+        uses: azure/aks-set-context@v4
         with:
-          method: service-principal
-          cluster-type: aks
           resource-group: ${{ env.AKS_RESOURCE_GROUP }}
           cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+          use-kubelogin: true
       
       - name: Set Kubernetes Namespace
         run: |

@@ -66,8 +66,10 @@ images:
     newTag: IMAGE_TAG
 
 patches:
+  # Patch para servicios que necesitan Eureka (api-gateway, proxy-client, business services)
   - target:
       kind: Deployment
+      name: api-gateway
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/env
@@ -78,7 +80,175 @@ patches:
             value: "http://zipkin-service:9411/"
           - name: SPRING_CONFIG_IMPORT
             value: "optional:configserver:http://cloud-config:9296"
+          - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+            value: "http://service-discovery:8761/eureka"
       - op: replace
         path: /spec/template/spec/containers/0/imagePullPolicy
         value: IfNotPresent
+  
+  - target:
+      kind: Deployment
+      name: proxy-client
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:configserver:http://cloud-config:9296"
+          - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+            value: "http://service-discovery:8761/eureka"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  - target:
+      kind: Deployment
+      name: user-service
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:configserver:http://cloud-config:9296"
+          - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+            value: "http://service-discovery:8761/eureka"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  - target:
+      kind: Deployment
+      name: product-service
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:configserver:http://cloud-config:9296"
+          - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+            value: "http://service-discovery:8761/eureka"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  - target:
+      kind: Deployment
+      name: order-service
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:configserver:http://cloud-config:9296"
+          - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+            value: "http://service-discovery:8761/eureka"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  - target:
+      kind: Deployment
+      name: payment-service
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:configserver:http://cloud-config:9296"
+          - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+            value: "http://service-discovery:8761/eureka"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  - target:
+      kind: Deployment
+      name: shipping-service
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:configserver:http://cloud-config:9296"
+          - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+            value: "http://service-discovery:8761/eureka"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  - target:
+      kind: Deployment
+      name: favourite-service
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+          - name: SPRING_CONFIG_IMPORT
+            value: "optional:configserver:http://cloud-config:9296"
+          - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+            value: "http://service-discovery:8761/eureka"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  # Patch para servicios que NO necesitan Eureka (service-discovery y cloud-config)
+  - target:
+      kind: Deployment
+      name: service-discovery
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  - target:
+      kind: Deployment
+      name: cloud-config
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SPRING_PROFILES_ACTIVE
+            value: "stage"
+          - name: SPRING_ZIPKIN_BASE_URL
+            value: "http://zipkin-service:9411/"
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+  
+  # Zipkin no necesita patch (usa imagen externa openzipkin/zipkin:latest)
 
