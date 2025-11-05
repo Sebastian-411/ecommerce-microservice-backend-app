@@ -231,10 +231,13 @@ jobs:
       - name: Configure Kubernetes Context - Azure AKS
         uses: azure/k8s-set-context@v3
         with:
-          method: kubeconfig
+          method: service-principal
           resource-group: ${{ env.AKS_RESOURCE_GROUP }}
           cluster-name: ${{ env.AKS_CLUSTER_NAME }}
-          namespace: ${{ env.KUBECTL_NAMESPACE }}
+      
+      - name: Set Kubernetes Namespace
+        run: |
+          kubectl config set-context --current --namespace=${{ env.KUBECTL_NAMESPACE }}
       
       - name: Despliegue en Kubernetes (Staging)
         run: |
