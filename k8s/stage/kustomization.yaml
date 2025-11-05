@@ -66,6 +66,17 @@ images:
     newTag: IMAGE_TAG
 
 patches:
+  # Forzar scheduling en pool de apps y bajar replicas a 1 en STAGE
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          agentpool: npapp
   # Patch para servicios que necesitan Eureka (api-gateway, proxy-client, business services)
   - target:
       kind: Deployment
