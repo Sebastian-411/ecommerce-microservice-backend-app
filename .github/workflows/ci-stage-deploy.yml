@@ -268,24 +268,55 @@ jobs:
             exit 1
           fi
 
-      - name: Rollout con diagnóstico (core)
+      - name: Wait for core rollouts (con diagnóstico)
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           NS="${{ env.KUBECTL_NAMESPACE }}"
           CORE_DEPLOYS=(service-discovery cloud-config api-gateway user-service product-service)
+
+          echo "↪ Revisando que los deploys existan en ${NS}…"
+          for d in "${CORE_DEPLOYS[@]}"; do
+            if ! kubectl -n "$NS" get deploy "$d" >/dev/null 2>&1; then
+              echo "❌ Falta el deploy $d en ${NS}. ¿Falló kustomize/apply o el namespace?"
+              kubectl get ns || true
+              kubectl -n "$NS" get all || true
+              exit 1
+            fi
+          done
+
+          echo "⎈ Verificando despliegues en namespace ${NS}"
+          kubectl -n "$NS" get deploy -o wide || true
+
           for d in "${CORE_DEPLOYS[@]}"; do
             echo "• wait Available: $d"
-            if ! kubectl -n "$NS" wait deploy/"$d" --for=condition=Available --timeout=10m; then
-              echo "❌ $d no llegó a Available. Diagnosticando…"
-              kubectl -n "$NS" get deploy/"$d" -o wide || true
-              kubectl -n "$NS" describe deploy/"$d" | tail -n +1 || true
-              # pods del deploy
-              PODS=($(kubectl -n "$NS" get po -l app="$d" -o name 2>/dev/null | sed 's|pod/||'))
-              for p in "${PODS[@]}"; do
-                echo "----- describe $p -----"
-                kubectl -n "$NS" describe pod "$p" | tail -n +1 || true
-                echo "----- logs $p (últimas 200) -----"
+            end=$((SECONDS+600))
+            ok=false
+            while [ $SECONDS -lt $end ]; do
+              if ! kubectl -n "$NS" get deploy "$d" >/dev/null 2>&1; then
+                echo "⚠️  $d no existe aún en ${NS}. Esperando 10s…"; sleep 10; continue
+              fi
+              kubectl -n "$NS" get deploy "$d" -o custom-columns=NAME:.metadata.name,DESIRED:.spec.replicas,AVAILABLE:.status.availableReplicas --no-headers || true
+              kubectl -n "$NS" get deploy "$d" -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason} {.message}{"\n"}{end}' || true
+              if kubectl -n "$NS" wait deploy/"$d" --for=condition=Available --timeout=15s >/dev/null 2>&1; then
+                ok=true; echo "✅ $d Available"; break
+              fi
+              kubectl -n "$NS" get po -l app="$d" -o custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase,REASON:.status.reason --no-headers || true
+              sleep 15
+            done
+
+            if [ "$ok" != "true" ]; then
+              echo "❌ $d NO llegó a Available. Diagnosticando…"
+              kubectl -n "$NS" get deploy "$d" -o wide || true
+              kubectl -n "$NS" describe deploy "$d" | tail -n +1 || true
+              echo "—— ReplicaSets ——"
+              kubectl -n "$NS" get rs -l app="$d" -o wide || true
+              echo "—— Pods ——"
+              kubectl -n "$NS" get po -l app="$d" -o wide || true
+              echo "—— Eventos (últimos 60) ——"
+              kubectl -n "$NS" get events --sort-by=.lastTimestamp | tail -n 60 || true
+              echo "—— Logs de pods (últimas 200 líneas) ——"
+              for p in $(kubectl -n "$NS" get po -l app="$d" -o name 2>/dev/null); do
                 kubectl -n "$NS" logs "$p" --tail=200 --all-containers || true
               done
               exit 1
