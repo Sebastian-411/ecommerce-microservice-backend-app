@@ -31,39 +31,39 @@ resources:
 commonLabels:
   environment: staging
 
-# Reemplazar imágenes - usar solo el nombre de la imagen (sin registry)
-# Cuando se usa 'imagePullPolicy: Never', Kubernetes usa imágenes locales cargadas con 'minikube image load'
+# Reemplazar imágenes - Docker Hub
+# El workflow reemplazará DOCKER_USERNAME y IMAGE_TAG dinámicamente
 images:
   - name: selimhorri/service-discovery-ecommerce-boot
-    newName: localhost:5000/service-discovery-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/service-discovery-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/cloud-config-ecommerce-boot
-    newName: localhost:5000/cloud-config-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/cloud-config-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/api-gateway-ecommerce-boot
-    newName: localhost:5000/api-gateway-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/api-gateway-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/proxy-client-ecommerce-boot
-    newName: localhost:5000/proxy-client-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/proxy-client-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/user-service-ecommerce-boot
-    newName: localhost:5000/user-service-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/user-service-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/product-service-ecommerce-boot
-    newName: localhost:5000/product-service-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/product-service-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/favourite-service-ecommerce-boot
-    newName: localhost:5000/favourite-service-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/favourite-service-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/order-service-ecommerce-boot
-    newName: localhost:5000/order-service-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/order-service-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/payment-service-ecommerce-boot
-    newName: localhost:5000/payment-service-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/payment-service-ecommerce-boot
+    newTag: IMAGE_TAG
   - name: selimhorri/shipping-service-ecommerce-boot
-    newName: localhost:5000/shipping-service-ecommerce-boot
-    newTag: latest
+    newName: DOCKER_USERNAME/shipping-service-ecommerce-boot
+    newTag: IMAGE_TAG
 
 patches:
   - target:

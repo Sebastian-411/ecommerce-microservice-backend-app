@@ -232,6 +232,7 @@ jobs:
         uses: azure/k8s-set-context@v3
         with:
           method: service-principal
+          cluster-type: aks
           resource-group: ${{ env.AKS_RESOURCE_GROUP }}
           cluster-name: ${{ env.AKS_CLUSTER_NAME }}
       
@@ -240,10 +241,18 @@ jobs:
           kubectl config set-context --current --namespace=${{ env.KUBECTL_NAMESPACE }}
       
       - name: Despliegue en Kubernetes (Staging)
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          IMAGE_TAG: latest
         run: |
           set -e
           echo "Creando namespace ${{ env.KUBECTL_NAMESPACE }} si no existe…"
           kubectl create namespace "${{ env.KUBECTL_NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "Reemplazando placeholders en kustomization.yaml con Docker Hub..."
+          # Reemplazar DOCKER_USERNAME y IMAGE_TAG en el kustomization.yaml antes de aplicar
+          sed -i "s|DOCKER_USERNAME|${DOCKER_USERNAME}|g" k8s/stage/kustomization.yaml
+          sed -i "s|IMAGE_TAG|${IMAGE_TAG}|g" k8s/stage/kustomization.yaml
           
           echo "Aplicando k8s/stage con kustomize (LoadRestrictionsNone)…"
           # Usamos kustomize para permitir rutas fuera del árbol del overlay (../dev/*)
@@ -252,6 +261,10 @@ jobs:
             echo "⚠️  Error aplicando recursos (puede ser temporal de etcd), verificando estado..."
             kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" || true
           }
+          
+          echo "Restaurando kustomization.yaml..."
+          # Restaurar el archivo original (git checkout)
+          git checkout k8s/stage/kustomization.yaml || true
           
           echo "Esperando pods listos en ${{ env.KUBECTL_NAMESPACE }}…"
           timeout=600; elapsed=0
