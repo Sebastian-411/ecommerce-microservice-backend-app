@@ -1,0 +1,188 @@
+name: CI - DEV Environment
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+env:
+  ENVIRONMENT: dev
+  PROJECT_VERSION: '0.1.0'
+  JAVA_VERSION: '11'
+  MAVEN_OPTS: '-Xmx3072m -XX:MaxPermSize=512m'
+
+jobs:
+  build:
+    name: Build Application - DEV
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: Set up Maven
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: Set Git Commit Short
+        id: git_commit
+        run: |
+          GIT_COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "N/A")
+          echo "commit_short=$GIT_COMMIT_SHORT" >> $GITHUB_OUTPUT
+          echo "GIT_COMMIT_SHORT=$GIT_COMMIT_SHORT" >> $GITHUB_ENV
+      
+      - name: Build Application
+        run: |
+          echo "=========================================="
+          echo "Pipeline de Construcción - DEV Environment"
+          echo "=========================================="
+          echo "Versión del Build: 0.1.0"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ env.GIT_COMMIT_SHORT }}"
+          echo "=========================================="
+          echo ""
+          echo "Construyendo todos los microservicios con tests..."
+          echo "=========================================="
+          
+          # Construir la aplicación completa con tests
+          ./mvnw clean test package
+          
+          echo ""
+          echo "=========================================="
+          echo "Verificando artefactos generados..."
+          echo "=========================================="
+          find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" | sort
+          echo ""
+          echo "Resumen de artefactos:"
+          find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" -exec ls -lh {} \;
+      
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jar-artifacts
+          path: |
+            **/target/*.jar
+            !**/target/*-original.jar
+          retention-days: 10
+          if-no-files-found: error
+      
+      - name: Unit Tests & Coverage
+        run: |
+          echo "=========================================="
+          echo "Ejecutando Unit Tests y Validando Cobertura (≥50%)"
+          echo "=========================================="
+          echo ""
+          echo "Ejecutando tests y validando cobertura para cada servicio..."
+          echo "=========================================="
+          
+          # Validar cobertura para cada servicio
+          failed_count=0
+          
+          for service in user-service product-service order-service favourite-service payment-service shipping-service; do
+            echo ""
+            echo "Procesando ${service}..."
+            echo "----------------------------------------"
+            
+            # Ejecutar tests, generar reporte y validar cobertura
+            # verify ejecutará el execution jacoco-check configurado en el phase verify
+            if ./mvnw test jacoco:report verify -pl ${service}; then
+              echo "${service}: Cobertura ≥50%"
+            else
+              echo "${service}: Cobertura <50% o error en la validación"
+              failed_count=$((failed_count + 1))
+            fi
+          done
+          
+          if [ $failed_count -gt 0 ]; then
+            echo ""
+            echo "=========================================="
+            echo "ERROR: $failed_count servicio(s) no cumplen con el 50% de cobertura o fallaron los tests"
+            echo "=========================================="
+            exit 1
+          else
+            echo ""
+            echo "=========================================="
+            echo "✅ Todos los servicios cumplen con el 50% de cobertura"
+            echo "=========================================="
+          fi
+      
+      - name: Upload Coverage Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-reports
+          path: |
+            **/target/site/jacoco/**/*
+          retention-days: 10
+          if-no-files-found: ignore
+      
+      - name: Build Validation
+        run: |
+          echo "=========================================="
+          echo "Validando construcción..."
+          echo "=========================================="
+          
+          # Verificar que los artefactos principales fueron generados
+          missing=0
+          
+          for service in service-discovery cloud-config api-gateway proxy-client user-service product-service favourite-service order-service payment-service shipping-service; do
+            jar_file=$(find ${service}/target -name "${service}-v*.jar" -not -name "*-original.jar" 2>/dev/null | head -1)
+            if [ -f "$jar_file" ]; then
+              echo "${service}: $(basename $jar_file)"
+            else
+              echo "${service}: JAR no encontrado"
+              missing=$((missing + 1))
+            fi
+          done
+          
+          if [ $missing -gt 0 ]; then
+            echo ""
+            echo "Advertencia: $missing servicio(s) sin JAR generado"
+            exit 1
+          else
+            echo ""
+            echo "Todos los microservicios fueron construidos exitosamente"
+          fi
+      
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "Resumen del Build - DEV Environment"
+          echo "=========================================="
+          echo "Build Number: ${{ github.run_number }}"
+          echo "Estado: ${{ job.status }}"
+          echo "Commit: ${{ env.GIT_COMMIT_SHORT }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "=========================================="
+      
+      - name: Success Summary
+        if: success()
+        run: |
+          echo "Build completado exitosamente!"
+          echo "Artefactos disponibles en:"
+          find . -name "*.jar" -path "*/target/*" -not -path "*/.m2/*" -not -name "*-original.jar" -exec echo "  - {}" \;
+      
+      - name: Failure Summary
+        if: failure()
+        run: |
+          echo "Build falló!"
+

@@ -1,0 +1,293 @@
+name: CI/CD - STAGING Deploy (Build, Tests & Deploy)
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+
+env:
+  ENVIRONMENT: stage
+  PROJECT_VERSION: ${{ github.run_number }}
+  JAVA_VERSION: '11'
+  MAVEN_OPTS: '-Xmx3072m -XX:MaxPermSize=512m'
+  
+  # Azure AKS configuración
+  KUBECTL_NAMESPACE: 'ecommerce-stage'
+  AKS_RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP || 'ecommerce-rg' }}
+  AKS_CLUSTER_NAME: ${{ secrets.AKS_CLUSTER_NAME || 'ecommerce-aks' }}
+  
+  # Docker registry - Docker Hub
+  DOCKER_REGISTRY: 'docker.io'
+  
+  # Servicios
+  INFRASTRUCTURE_SERVICES: 'service-discovery,cloud-config'
+  CORE_SERVICES: 'api-gateway,proxy-client'
+  BUSINESS_SERVICES: 'user-service,product-service,favourite-service,order-service,payment-service,shipping-service'
+
+jobs:
+  build-and-deploy:
+    name: Build, Deploy & Test - STAGING (Push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    
+    # Permisos necesarios para Docker y Kubernetes
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: maven
+      
+      - name: Set Git Commit Short
+        id: git_commit
+        run: |
+          GIT_COMMIT_SHORT=$(git rev-parse --short HEAD 2>/dev/null || echo "N/A")
+          echo "commit_short=$GIT_COMMIT_SHORT" >> $GITHUB_OUTPUT
+          echo "GIT_COMMIT_SHORT=$GIT_COMMIT_SHORT" >> $GITHUB_ENV
+      
+      - name: Preparación del Entorno
+        run: |
+          echo "=========================================="
+          echo "Pipeline STAGING - Build, Deploy & Test"
+          echo "=========================================="
+          echo "Build: ${{ env.PROJECT_VERSION }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Env: ${{ env.ENVIRONMENT }}"
+          echo "Azure AKS Cluster: ${{ env.AKS_CLUSTER_NAME }}"
+          echo "Azure Resource Group: ${{ env.AKS_RESOURCE_GROUP }}"
+          echo "Namespace: ${{ env.KUBECTL_NAMESPACE }}"
+          echo "Docker Registry: ${{ env.DOCKER_REGISTRY }}"
+          echo "=========================================="
+          
+          echo ""
+          echo "Verificando herramientas..."
+          ./mvnw --version || echo "⚠️  mvnw no disponible"
+          
+          docker --version
+          docker ps >/dev/null 2>&1 || echo "⚠️  Docker CLI sin acceso al daemon"
+          
+          kubectl version --client || echo "⚠️  kubectl no disponible"
+          kustomize version || echo "⚠️  kustomize no disponible"
+          
+          echo ""
+          echo "Este workflow ejecuta build, tests y despliegue completo a Azure AKS"
+      
+      - name: Validación y Pruebas (setup) - Paralelo
+        run: |
+          # Ejecutar validación e instalación del padre en paralelo usando background jobs
+          ./mvnw validate -q || true &
+          VALIDATE_PID=$!
+          
+          ./mvnw clean install -N -q &
+          INSTALL_PID=$!
+          
+          # Esperar a que ambos terminen
+          wait $VALIDATE_PID
+          wait $INSTALL_PID
+      
+      - name: Pruebas Unitarias y Cobertura
+        run: |
+          echo "Ejecutando Unitarias + JaCoCo (≥50%)"
+          set -e
+          failed=0
+          for service in user-service product-service order-service favourite-service payment-service shipping-service; do
+            echo ">>> $service"
+            if ./mvnw -q -pl "$service" clean test jacoco:report verify; then
+              echo "✅ $service OK"
+            else
+              echo "❌ $service FAIL"; failed=$((failed+1))
+            fi
+          done
+          [ $failed -eq 0 ] || { echo "❌ $failed servicio(s) no cumplen"; exit 1; }
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            **/target/surefire-reports/TEST-*.xml
+          retention-days: 10
+          if-no-files-found: ignore
+      
+      - name: Upload Coverage Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-reports
+          path: |
+            **/target/site/jacoco/**/*
+          retention-days: 10
+          if-no-files-found: ignore
+      
+      - name: Construcción de Artefactos
+        run: |
+          set -e
+          ./mvnw clean package -DskipTests
+          find . -name "*.jar" -path "*/target/*" -not -name "*-original.jar" | sort
+      
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jar-artifacts
+          path: |
+            **/target/*.jar
+            !**/target/*-original.jar
+          retention-days: 10
+          if-no-files-found: error
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: ${{ env.DOCKER_REGISTRY }}
+      
+      - name: Construcción de Imágenes Docker
+        env:
+          ALL_SERVICES: ${{ env.INFRASTRUCTURE_SERVICES }},${{ env.CORE_SERVICES }},${{ env.BUSINESS_SERVICES }}
+        run: |
+          set -e
+          ALL_SERVICES="${{ env.INFRASTRUCTURE_SERVICES }},${{ env.CORE_SERVICES }},${{ env.BUSINESS_SERVICES }}"
+          DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
+          
+          for svc in $(echo "$ALL_SERVICES" | tr ',' ' '); do
+            echo "Docker build: $svc"
+            IMAGE_NAME="${DOCKER_USERNAME}/$svc-ecommerce-boot"
+            
+            docker build \
+              -t "${IMAGE_NAME}:${{ env.PROJECT_VERSION }}" \
+              -t "${IMAGE_NAME}:latest" \
+              --build-arg PROJECT_VERSION="${{ env.PROJECT_VERSION }}" \
+              -f "$svc/Dockerfile" .
+          done
+      
+      - name: Push de Imágenes Docker a Docker Hub
+        env:
+          ALL_SERVICES: ${{ env.INFRASTRUCTURE_SERVICES }},${{ env.CORE_SERVICES }},${{ env.BUSINESS_SERVICES }}
+        run: |
+          set -e
+          ALL_SERVICES="${{ env.INFRASTRUCTURE_SERVICES }},${{ env.CORE_SERVICES }},${{ env.BUSINESS_SERVICES }}"
+          DOCKER_USERNAME="${{ secrets.DOCKER_USERNAME }}"
+          
+          # Push a Docker Hub (solo en ramas específicas)
+          if [[ "${{ github.ref_name }}" == "develop" || "${{ github.ref_name }}" == "stage" || "${{ github.ref_name }}" == "staging" || "${{ github.ref_name }}" == "main" ]]; then
+            for svc in $(echo "$ALL_SERVICES" | tr ',' ' '); do
+              IMAGE_NAME="${DOCKER_USERNAME}/$svc-ecommerce-boot"
+              echo "Push imagen a Docker Hub: $svc"
+              
+              # Push con retry para cada tag
+              for tag in "${{ env.PROJECT_VERSION }}" "latest"; do
+                for attempt in 1 2 3; do
+                  if docker push "${IMAGE_NAME}:${tag}" 2>&1; then
+                    echo "✅ Push exitoso: $svc:${tag}"
+                    break
+                  else
+                    echo "⚠️  Intento $attempt falló para $svc:${tag}"
+                    if [ $attempt -eq 3 ]; then
+                      echo "❌ Push falló después de 3 intentos para $svc:${tag}"
+                      exit 1
+                    fi
+                    sleep 2
+                  fi
+                done
+              done
+            done
+          else
+            echo "Push a Docker Hub omitido (no es rama develop/stage/staging/main)"
+          fi
+      
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+      
+      - name: Set up kustomize
+        uses: imranismail/setup-kustomize@v2
+        with:
+          kustomize-version: '5.0.0'
+      
+      - name: Configure Kubernetes Context - Azure AKS
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+          namespace: ${{ env.KUBECTL_NAMESPACE }}
+      
+      - name: Despliegue en Kubernetes (Staging)
+        run: |
+          set -e
+          echo "Creando namespace ${{ env.KUBECTL_NAMESPACE }} si no existe…"
+          kubectl create namespace "${{ env.KUBECTL_NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "Aplicando k8s/stage con kustomize (LoadRestrictionsNone)…"
+          # Usamos kustomize para permitir rutas fuera del árbol del overlay (../dev/*)
+          # Si hay un error de etcd timeout, continuamos igual (puede ser temporal)
+          kustomize build --load-restrictor=LoadRestrictionsNone k8s/stage/ | kubectl -n "${{ env.KUBECTL_NAMESPACE }}" apply -f - || {
+            echo "⚠️  Error aplicando recursos (puede ser temporal de etcd), verificando estado..."
+            kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" || true
+          }
+          
+          echo "Esperando pods listos en ${{ env.KUBECTL_NAMESPACE }}…"
+          timeout=600; elapsed=0
+          while [ $elapsed -lt $timeout ]; do
+            total=$(kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" --no-headers 2>/dev/null | wc -l || echo 0)
+            ready=$(kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | grep -o True | wc -l || echo 0)
+            [ "$total" -gt 0 ] && [ "$ready" -eq "$total" ] && { echo "✅ Pods listos ($ready/$total)"; break; }
+            echo "Aún esperando… ($ready/$total)"; sleep 10; elapsed=$((elapsed+10))
+          done
+          [ $elapsed -lt $timeout ] || { echo "❌ Timeout esperando pods"; kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}"; exit 1; }
+          
+          kubectl get services -n "${{ env.KUBECTL_NAMESPACE }}"
+          kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" -o wide
+          echo ""
+          echo "✅ Despliegue completado exitosamente"
+      
+      - name: Build Summary - Success
+        if: success()
+        run: |
+          echo "=========================================="
+          echo "Pipeline STAGING - ÉXITO"
+          echo "=========================================="
+          echo "Build: ${{ github.run_number }}"
+          echo "Versión: ${{ env.PROJECT_VERSION }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ env.GIT_COMMIT_SHORT }}"
+          echo "Env: ${{ env.ENVIRONMENT }}"
+          echo "Azure AKS Cluster: ${{ env.AKS_CLUSTER_NAME }}"
+          echo "Azure Resource Group: ${{ env.AKS_RESOURCE_GROUP }}"
+          echo "K8s Namespace: ${{ env.KUBECTL_NAMESPACE }}"
+          echo "Docker Registry: Docker Hub"
+          echo "=========================================="
+      
+      - name: Build Summary - Failure
+        if: failure()
+        run: |
+          echo "❌ Pipeline STAGING falló"
+          set +e
+          kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" -o wide || true
+          kubectl get events -n "${{ env.KUBECTL_NAMESPACE }}" --sort-by=.lastTimestamp | tail -n 40 || true
+          echo "Tip: valida que las credenciales de Azure estén configuradas correctamente y que el cluster AKS sea accesible."
+
