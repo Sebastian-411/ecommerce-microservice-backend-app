@@ -302,8 +302,8 @@ jobs:
           
           echo "⏳ Esperando rollout de despliegues CORE en ${NS}..."
           for d in "${CORE_DEPLOYS[@]}"; do
-            echo "• rollout status: $d"
-            if ! kubectl -n "${NS}" rollout status deploy/"$d" --timeout=5m; then
+            echo "• wait Available: $d"
+            if ! kubectl -n "${NS}" wait deploy/"$d" --for=condition=Available --timeout=10m; then
               echo "❌ $d no alcanzó Available. Diagnosticando…"
               kubectl -n "${NS}" describe deploy "$d" || true
               P=$(kubectl -n "${NS}" get pods -l app="$d" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
