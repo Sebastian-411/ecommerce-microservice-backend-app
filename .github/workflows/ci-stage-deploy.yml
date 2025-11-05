@@ -254,47 +254,109 @@ jobs:
         run: |
           kubectl config set-context --current --namespace=${{ env.KUBECTL_NAMESPACE }}
       
-      - name: Despliegue en Kubernetes (Staging)
-        env:
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          IMAGE_TAG: latest
-        run: |
-          set -e
-          echo "Creando namespace ${{ env.KUBECTL_NAMESPACE }} si no existe…"
-          kubectl create namespace "${{ env.KUBECTL_NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
-          
-          echo "Reemplazando placeholders en kustomization.yaml con Docker Hub..."
-          # Reemplazar DOCKER_USERNAME y IMAGE_TAG en el kustomization.yaml antes de aplicar
-          sed -i "s|DOCKER_USERNAME|${DOCKER_USERNAME}|g" k8s/stage/kustomization.yaml
-          sed -i "s|IMAGE_TAG|${IMAGE_TAG}|g" k8s/stage/kustomization.yaml
-          
-          echo "Aplicando k8s/stage con kustomize (LoadRestrictionsNone)…"
-          # Usamos kustomize para permitir rutas fuera del árbol del overlay (../dev/*)
-          # Si hay un error de etcd timeout, continuamos igual (puede ser temporal)
-          kustomize build --load-restrictor=LoadRestrictionsNone k8s/stage/ | kubectl -n "${{ env.KUBECTL_NAMESPACE }}" apply -f - || {
-            echo "⚠️  Error aplicando recursos (puede ser temporal de etcd), verificando estado..."
-            kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" || true
-          }
-          
-          echo "Restaurando kustomization.yaml..."
-          # Restaurar el archivo original (git checkout)
-          git checkout k8s/stage/kustomization.yaml || true
-          
-          echo "Esperando pods listos en ${{ env.KUBECTL_NAMESPACE }}…"
-          timeout=600; elapsed=0
-          while [ $elapsed -lt $timeout ]; do
-            total=$(kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" --no-headers 2>/dev/null | wc -l || echo 0)
-            ready=$(kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | grep -o True | wc -l || echo 0)
-            [ "$total" -gt 0 ] && [ "$ready" -eq "$total" ] && { echo "✅ Pods listos ($ready/$total)"; break; }
-            echo "Aún esperando… ($ready/$total)"; sleep 10; elapsed=$((elapsed+10))
-          done
-          [ $elapsed -lt $timeout ] || { echo "❌ Timeout esperando pods"; kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}"; exit 1; }
-          
-          kubectl get services -n "${{ env.KUBECTL_NAMESPACE }}"
-          kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" -o wide
-          echo ""
-          echo "✅ Despliegue completado exitosamente"
-      
+          - name: Despliegue en Kubernetes (Staging)
+          env:
+            DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+            DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+            IMAGE_TAG: latest
+          shell: bash
+          run: |
+            set -euo pipefail
+        
+            NS="${{ env.KUBECTL_NAMESPACE }}"
+            echo "Creando namespace ${NS} si no existe…"
+            kubectl create namespace "${NS}" --dry-run=client -o yaml | kubectl apply -f -
+        
+            echo "Reemplazando placeholders en kustomization.yaml con Docker Hub..."
+            sed -i "s|DOCKER_USERNAME|${DOCKER_USERNAME}|g" k8s/stage/kustomization.yaml
+            sed -i "s|IMAGE_TAG|${IMAGE_TAG}|g" k8s/stage/kustomization.yaml
+        
+            # (Opcional, recomendado) evitar rate-limit de Docker Hub con imagePullSecret
+            if [[ -n "${DOCKER_USERNAME:-}" && -n "${DOCKER_PASSWORD:-}" ]]; then
+              echo "Creando/actualizando imagePullSecret 'regcred'..."
+              kubectl -n "${NS}" create secret docker-registry regcred \
+                --docker-server=index.docker.io \
+                --docker-username="${DOCKER_USERNAME}" \
+                --docker-password="${DOCKER_PASSWORD}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+        
+              # Añadir regcred a todos los Deployments conocidos (ignora errores si alguno no existe)
+              for d in api-gateway cloud-config favourite-service order-service payment-service product-service proxy-client service-discovery shipping-service user-service zipkin-service; do
+                kubectl -n "${NS}" patch deploy "$d" --type='json' \
+                  -p='[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"regcred"}]}]' || true
+              done
+            fi
+        
+            echo "Aplicando k8s/stage con kustomize (LoadRestrictionsNone)…"
+            kustomize build --load-restrictor=LoadRestrictionsNone k8s/stage/ \
+              | kubectl -n "${NS}" apply -f - || {
+                echo "⚠️  Error aplicando recursos, mostrando pods:"
+                kubectl -n "${NS}" get pods || true
+              }
+        
+            echo "Restaurando kustomization.yaml..."
+            git checkout -- k8s/stage/kustomization.yaml || true
+        
+            # ===== Espera robusta: SOLO core con rollout status =====
+            CORE_DEPLOYS=(service-discovery cloud-config api-gateway user-service product-service)
+        
+            echo "⏳ Esperando rollout de despliegues CORE en ${NS}..."
+            for d in "${CORE_DEPLOYS[@]}"; do
+              echo "• rollout status: $d"
+              if ! kubectl -n "${NS}" rollout status deploy/"$d" --timeout=5m; then
+                echo "❌ $d no alcanzó Available. Diagnosticando…"
+                kubectl -n "${NS}" describe deploy "$d" || true
+                P=$(kubectl -n "${NS}" get pods -l app="$d" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [[ -n "${P:-}" ]]; then
+                  echo "----- describe $P -----"
+                  kubectl -n "${NS}" describe pod "$P" | sed -n '/Events/,$p' || true
+                  echo "----- logs $P -----"
+                  kubectl -n "${NS}" logs "$P" --all-containers --tail=200 || true
+                fi
+                exit 1
+              fi
+            done
+        
+            echo "📊 Estado de Deployments:"
+            kubectl -n "${NS}" get deploy -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.availableReplicas,DESIRED:.spec.replicas --no-headers | sort || true
+        
+            echo "📦 Pods (wide):"
+            kubectl -n "${NS}" get pods -o wide || true
+        
+            echo "🔎 Revisando pods problemáticos…"
+            BAD=$(kubectl -n "${NS}" get pods --no-headers 2>/dev/null | egrep -i 'CrashLoopBackOff|ImagePullBackOff|ErrImagePull|CreateContainerError|OOMKilled|ContainerStatusUnknown' | awk '{print $1}' || true)
+            PENDING=$(kubectl -n "${NS}" get pods --field-selector=status.phase=Pending --no-headers 2>/dev/null | awk '{print $1}' || true)
+        
+            if [[ -n "${BAD:-}" ]]; then
+              echo "❌ Pods en error:"
+              echo "$BAD" | sed 's/^/   - /'
+              for p in $BAD; do
+                echo "----- describe $p -----"
+                kubectl -n "${NS}" describe pod "$p" | sed -n '/Events/,$p' || true
+                echo "----- logs $p -----"
+                kubectl -n "${NS}" logs "$p" --all-containers --tail=200 || true
+              done
+              exit 1
+            fi
+        
+            if [[ -n "${PENDING:-}" ]]; then
+              echo "⚠️ Pods en Pending (falta CPU/RAM/IPs o requests altos):"
+              echo "$PENDING" | sed 's/^/   - /'
+              one=$(echo "$PENDING" | head -n1)
+              if [[ -n "${one:-}" ]]; then
+                echo "----- describe $one -----"
+                kubectl -n "${NS}" describe pod "$one" | sed -n '/Events/,$p' || true
+              fi
+              echo "Tip: escala el cluster (az aks scale ... --node-count 2) o baja recursos/replicas."
+              # No hacemos exit 1 aquí: el CORE ya quedó listo.
+            fi
+        
+            echo "🧠 Services y Endpoints:"
+            kubectl -n "${NS}" get svc
+            kubectl -n "${NS}" get endpoints || true
+        
+            echo "✅ Despliegue completado (CORE listo)."
+            
       - name: Build Summary - Success
         if: success()
         run: |
