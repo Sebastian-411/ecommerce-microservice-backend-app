@@ -168,36 +168,43 @@ jobs:
     needs: docker-build
     steps:
       - uses: actions/checkout@v4
+
       - name: Azure Login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'latest'
+
       - name: Set up kustomize
         uses: imranismail/setup-kustomize@v2
         with:
           kustomize-version: '5.0.0'
+
       - name: Install kubelogin
         run: |
           set -e
           KUBELOGIN_VERSION="v0.0.28"
           curl -LO "https://github.com/Azure/kubelogin/releases/download/${KUBELOGIN_VERSION}/kubelogin-linux-amd64.zip"
           unzip -q kubelogin-linux-amd64.zip
-          chmod +x bin/linux_amd64/kubelogin
-          sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
+          sudo install -m 0755 bin/linux_amd64/kubelogin /usr/local/bin/kubelogin
           kubelogin --version
+
       - name: Set AKS context (native)
         uses: azure/aks-set-context@v4
         with:
           resource-group: ${{ env.AKS_RESOURCE_GROUP }}
           cluster-name: ${{ env.AKS_CLUSTER_NAME }}
           use-kubelogin: true
+
       - name: Set Kubernetes Namespace
         run: |
+          kubectl create namespace "${{ env.KUBECTL_NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
           kubectl config set-context --current --namespace=${{ env.KUBECTL_NAMESPACE }}
+
       - name: Deploy manifests (kustomize)
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
@@ -207,32 +214,84 @@ jobs:
         run: |
           set -euo pipefail
           NS="${{ env.KUBECTL_NAMESPACE }}"
-          kubectl create namespace "${NS}" --dry-run=client -o yaml | kubectl apply -f -
-          sed -i "s|DOCKER_USERNAME|${DOCKER_USERNAME}|g" k8s/stage/kustomization.yaml
-          sed -i "s|IMAGE_TAG|${IMAGE_TAG}|g" k8s/stage/kustomization.yaml
+          # pull secret global en el SA por defecto (evitas parches por deploy)
           if [[ -n "${DOCKER_USERNAME:-}" && -n "${DOCKER_PASSWORD:-}" ]]; then
             kubectl -n "${NS}" create secret docker-registry regcred \
               --docker-server=index.docker.io \
               --docker-username="${DOCKER_USERNAME}" \
               --docker-password="${DOCKER_PASSWORD}" \
               --dry-run=client -o yaml | kubectl apply -f -
-            for d in api-gateway cloud-config favourite-service order-service payment-service product-service proxy-client service-discovery shipping-service user-service zipkin-service; do
-              kubectl -n "${NS}" patch deploy "$d" --type='json' \
-                -p='[{"op":"add","path":"/spec/template/spec/imagePullSecrets","value":[{"name":"regcred"}]}]' || true
-            done
+            kubectl -n "${NS}" patch serviceaccount default --type='merge' -p '{"imagePullSecrets":[{"name":"regcred"}]}' || true
           fi
-          kustomize build --load-restrictor=LoadRestrictionsNone k8s/stage/ | kubectl -n "${NS}" apply -f - || {
-            echo "⚠️  Error aplicando recursos, mostrando pods:"; kubectl -n "${NS}" get pods || true; }
+          # templating
+          sed -i "s|DOCKER_USERNAME|${DOCKER_USERNAME}|g" k8s/stage/kustomization.yaml
+          sed -i "s|IMAGE_TAG|${IMAGE_TAG}|g" k8s/stage/kustomization.yaml
+          kustomize build --load-restrictor=LoadRestrictionsNone k8s/stage/ | kubectl apply -n "${NS}" -f - || true
           git checkout -- k8s/stage/kustomization.yaml || true
-      - name: Wait for core rollouts
+
+      - name: Pre-flight de capacidad (CPU/Mem)
+        shell: bash
+        run: |
+          set -e
+          NS="${{ env.KUBECTL_NAMESPACE }}"
+          # Suma requests de todos los containers del namespace
+          REQ_CPU=$(kubectl -n "$NS" get pods --no-headers -o json \
+            | jq -r '[.items[].spec.containers[].resources.requests.cpu // "0"] 
+              | map(gsub("m$";"")) 
+              | map( if test("^[0-9]+$") then .|tonumber else ( .|sub("n$";"")|tonumber/1000000 ) end )
+              | add // 0' )
+          REQ_MEM=$(kubectl -n "$NS" get pods --no-headers -o json \
+            | jq -r '[.items[].spec.containers[].resources.requests.memory // "0"] 
+              | map( if test("Mi$") then (.|sub("Mi$";"")|tonumber) 
+                      elif test("Gi$") then (.|sub("Gi$";"")|tonumber*1024) 
+                      else 0 end) 
+              | add // 0' )
+          # Capacidad allocatable del cluster
+          ALLOC_CPU=$(kubectl get nodes -o json \
+            | jq -r '[.items[].status.allocatable.cpu]
+              | map(gsub("m$";""))
+              | map( if test("^[0-9]+$") then .|tonumber*1000 else .|tonumber end )
+              | add' )
+          ALLOC_MEM=$(kubectl get nodes -o json \
+            | jq -r '[.items[].status.allocatable.memory]
+              | map( if test("Ki$") then (.|sub("Ki$";"")|tonumber/1024) 
+                      elif test("Mi$") then (.|sub("Mi$";"")|tonumber) 
+                      elif test("Gi$") then (.|sub("Gi$";"")|tonumber*1024) 
+                      else 0 end )
+              | add' )
+          echo "Requests CPU (m): $REQ_CPU  / Allocatable CPU (m): $ALLOC_CPU"
+          echo "Requests Mem (Mi): $REQ_MEM / Allocatable Mem (Mi): $ALLOC_MEM"
+          # Si ya no alcanza, falla acá con mensaje claro
+          if (( REQ_CPU > ALLOC_CPU )) || (( REQ_MEM > ALLOC_MEM )); then
+            echo "❌ No hay capacidad suficiente en el cluster para los requests actuales."
+            echo "Sugerencias: baja replicas/requests en stage o sube node count/size."
+            exit 1
+          fi
+
+      - name: Rollout con diagnóstico (core)
+        shell: bash
         run: |
           set -e
           NS="${{ env.KUBECTL_NAMESPACE }}"
           CORE_DEPLOYS=(service-discovery cloud-config api-gateway user-service product-service)
           for d in "${CORE_DEPLOYS[@]}"; do
             echo "• wait Available: $d"
-            kubectl -n "${NS}" wait deploy/"$d" --for=condition=Available --timeout=10m
+            if ! kubectl -n "$NS" wait deploy/"$d" --for=condition=Available --timeout=10m; then
+              echo "❌ $d no llegó a Available. Diagnosticando…"
+              kubectl -n "$NS" get deploy/"$d" -o wide || true
+              kubectl -n "$NS" describe deploy/"$d" | tail -n +1 || true
+              # pods del deploy
+              PODS=($(kubectl -n "$NS" get po -l app="$d" -o name 2>/dev/null | sed 's|pod/||'))
+              for p in "${PODS[@]}"; do
+                echo "----- describe $p -----"
+                kubectl -n "$NS" describe pod "$p" | tail -n +1 || true
+                echo "----- logs $p (últimas 200) -----"
+                kubectl -n "$NS" logs "$p" --tail=200 --all-containers || true
+              done
+              exit 1
+            fi
           done
+
       - name: Post-deploy diagnostics
         if: always()
         run: |
@@ -240,27 +299,3 @@ jobs:
           kubectl -n "${NS}" get deploy -o custom-columns=NAME:.metadata.name,AVAILABLE:.status.availableReplicas,DESIRED:.spec.replicas --no-headers | sort || true
           kubectl -n "${NS}" get pods -o wide || true
           kubectl -n "${NS}" get svc || true
-      - name: Build Summary - Success
-        if: success()
-        run: |
-          echo "=========================================="
-          echo "Pipeline STAGING - ÉXITO"
-          echo "=========================================="
-          echo "Build: ${{ github.run_number }}"
-          echo "Versión: ${{ env.PROJECT_VERSION }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Commit: ${{ env.GIT_COMMIT_SHORT }}"
-          echo "Env: ${{ env.ENVIRONMENT }}"
-          echo "Azure AKS Cluster: ${{ env.AKS_CLUSTER_NAME }}"
-          echo "Azure Resource Group: ${{ env.AKS_RESOURCE_GROUP }}"
-          echo "K8s Namespace: ${{ env.KUBECTL_NAMESPACE }}"
-          echo "Docker Registry: Docker Hub"
-          echo "=========================================="
-      - name: Build Summary - Failure
-        if: failure()
-        run: |
-          echo "❌ Pipeline STAGING falló"
-          set +e
-          kubectl get pods -n "${{ env.KUBECTL_NAMESPACE }}" -o wide || true
-          kubectl get events -n "${{ env.KUBECTL_NAMESPACE }}" --sort-by=.lastTimestamp | tail -n 40 || true
-
